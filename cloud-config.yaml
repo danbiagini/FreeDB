@@ -1,0 +1,15 @@
+# this DOESN'T work.  it appears that GCE on debian doesn't install cloud-init.
+users:
+  - name: incus
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    groups: users
+
+# Run a few commands (update apt's repo indexes and install incus )
+runcmd:
+  - sudo apt-get update
+  - sudo apt install incus/bookworm-backports
+  - sudo adduser incus incus-admin
+  - newgrp incus-admin
+  - incus admin init --minimal
+  - echo "Done"
