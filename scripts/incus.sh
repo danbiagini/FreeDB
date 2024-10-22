@@ -1,7 +1,5 @@
+sudo apt-get install -yq postgresql-client-15
 sudo adduser --system --shell /bin/bash --home /home/incus incus
 sudo adduser incus incus-admin
-sudo su incus
+sudo su - incus
 incus admin init
-
-# for debugging postgresql instance
-sudo apt-get install postgresql-client-15

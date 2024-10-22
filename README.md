@@ -10,5 +10,12 @@ https://linuxcontainers.org/incus/docs/main/installing/#linux
 https://docs.rockylinux.org/books/lxd_server/01-install/
 
 # To Run
-terraform plan
-terraform apply
+terraform plan -var-file=values.tfvars
+terraform apply -var-file=values.tfvars
+
+# To Connect
+
+## From cloud shell
+gcloud compute ssh --zone "us-central1-a" "freedb" --tunnel-through-iap
+
+
