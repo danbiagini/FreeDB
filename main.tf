@@ -116,7 +116,7 @@ resource "google_compute_instance" "freedb-cvat" {
 
   boot_disk {
     initialize_params {
-      image = "debian-cloud/debian-12"
+      image = "ubuntu-os-cloud/ubuntu-2404-lts-amd64"
     }
   }
 
@@ -132,6 +132,11 @@ EOF
 
   network_interface {
     subnetwork = google_compute_subnetwork.default.id
+  }
+
+  service_account {
+    scopes = ["cloud-platform"]
+    email = data.google_service_account.default.email
   }
 }
 

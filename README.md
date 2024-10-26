@@ -10,8 +10,8 @@ https://linuxcontainers.org/incus/docs/main/installing/#linux
 https://docs.rockylinux.org/books/lxd_server/01-install/
 
 # To Run
-terraform plan -var-file=values.tfvars
-terraform apply -var-file=values.tfvars
+1. terraform plan -var-file=values.tfvars
+1. terraform apply -var-file=values.tfvars
 
 # To Connect
 
