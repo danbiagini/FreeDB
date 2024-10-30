@@ -37,7 +37,7 @@ resource "google_compute_firewall" "default" {
   priority = 1000
   allow {
     protocol = "tcp"
-    ports    = ["5432", "22"]
+    ports    = ["5432", "22", "8080"]
   }
   source_ranges = ["35.235.240.0/20"]
 
