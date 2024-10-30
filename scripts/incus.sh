@@ -1,3 +1,4 @@
+sudo apt-get update; sudo apt-get install -yq incus
 sudo apt-get install -yq postgresql-client-15
 sudo adduser --system --shell /bin/bash --home /home/incus incus
 sudo adduser incus incus-admin

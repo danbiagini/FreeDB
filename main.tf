@@ -90,7 +90,6 @@ resource "google_compute_instance" "default" {
     source = google_compute_disk.data.id
     device_name = google_compute_disk.data.name
   }
-  metadata_startup_script = "sudo apt-get update; sudo apt-get install -yq incus"
 
   network_interface {
     subnetwork = google_compute_subnetwork.default.id
@@ -119,11 +118,6 @@ resource "google_compute_instance" "freedb-cvat" {
       image = "ubuntu-os-cloud/ubuntu-2404-lts-amd64"
     }
   }
-
-  metadata_startup_script = <<-EOF
-sudo apt-get update
-sudo apt-get install -yq incus postgresql-client-15 git curl
-EOF
 
   attached_disk {
     source = google_compute_disk.cvat-data.id

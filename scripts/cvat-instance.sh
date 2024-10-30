@@ -1,3 +1,6 @@
+sudo apt-get update
+sudo apt-get install -yq postgresql-client-15 git curl
+
 #setup disk and mount
 # find the dev/<name> of the device to mount.  You can use ls -l /dev/disk/by-id/google-*
 #sudo mkfs.ext4 -m 0 -E lazy_itable_init=0,lazy_journal_init=0,discard /dev/sdb
