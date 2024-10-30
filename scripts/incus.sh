@@ -9,6 +9,8 @@ incus admin init
 # https://blog.simos.info/how-to-install-and-set-up-incus-on-a-cloud-server/
 # https://www.cyberciti.biz/faq/installing-zfs-on-debian-12-bookworm-linux-apt-get/
 
-incus storage create pd-standard zfs source=/dev/sdb
-incus profile copy default v1
-incus profile edit v1 # switch to the new storage pool
+# TODO: need to determine the correct device for the disk
+
+#incus storage create pd-standard zfs source=/dev/sdb
+#incus profile copy default v1
+#incus profile edit v1 # switch to the new storage pool
