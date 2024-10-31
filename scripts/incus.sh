@@ -16,11 +16,15 @@ sudo apt-get update; sudo apt-get install -yq incus
 sudo apt-get install -yq postgresql-client-15
 
 sudo sed -r -i'.BAK' 's/^Components(.*)$/Components\1 contrib/g' /etc/apt/sources.list.d/debian.sources
-sudo apt install zfsutils-linux
-
+# sudo apt install zfsutils-linux
+sudo deluser incus
 sudo adduser --system --shell /bin/bash --home /home/incus incus
-sudo adduser incus incus-admin
-#sudo su - incus
+sudo usermod -aG incus-admin incus 
+sudo usermod -aG sudo incus
+sudo -u incus cp /etc/skel/.* /home/incus/
+
+# this command must be interactive because the zfs install has a license warning
+# apt install linux-headers-cloud-amd64 zfsutils-linux zfs-dkms zfs-zed
 #incus admin init
 
 # https://openzfs.github.io/openzfs-docs/Getting%20Started/Debian/

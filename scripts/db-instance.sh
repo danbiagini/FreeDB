@@ -1,7 +1,6 @@
 incus launch images:debian/12/cloud db1
 incus exec db1 -- apt install -yq postgresql curl cron
 
-incus snapshot create db1 fresh-postgres15-install
 
 
 # https://wiki.debian.org/PostgreSql
