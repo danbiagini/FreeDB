@@ -1,12 +1,10 @@
-incus launch images:debian/12/cloud db1
-incus exec db1 -- apt install -yq postgresql curl cron
-
-
+sudo -u incus incus launch images:debian/12/cloud db1
+sudo -u incus incus exec db1 -- apt install -yq postgresql curl cron
 
 # https://wiki.debian.org/PostgreSql
 sudo adduser --system --shell /bin/bash --home /home/sportsoil sportsoil
 sudo -u postgres createuser sportsoil
-createdb -O sportsoil sportsoil
+sudo -u sportsoil createdb -O sportsoil sportsoil
 
 # add pg_hba entry for client and accept tcp connections
 
@@ -21,12 +19,11 @@ createdb -O sportsoil sportsoil
 # to connect from G CloudShell 
 
 # setup nightly pg_dump cron job
-incus exec db1 -- sudo -u postgres curl -O https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-linux-x86_64.tar.gz
-incus exec db1 -- tar -xf google-cloud-cli-linux-x86_64.tar.gz
+sudo -u incus incus exec db1 -- sudo -u postgres curl -O https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-linux-x86_64.tar.gz
+sudo -u incus incus exec db1 -- tar -xf google-cloud-cli-linux-x86_64.tar.gz
 
 # setup the postgres user with bash and PATH after the gcloud install
-incus exec db1 -- cp .bashrc /var/lib/postgresql/
-incus exec db1 -- cp .profile /var/lib/postgresql/
+sudo -u incus incus exec db1 -- cp /etc/skel/.* /var/lib/postgresql/
 
 # TODO: fix this, it will be interactive
-incus exec db1 -- gcloud init
+#sudo -u incus incus exec db1 -- gcloud init
