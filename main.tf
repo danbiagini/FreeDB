@@ -4,6 +4,10 @@ variable "service_account_id" {
  description = "Service account for the EC2 instance"
 }
 
+locals {
+  force_destroy = "103024"
+}
+
 resource "google_compute_subnetwork" "default" {
   name          = "backend-subnet"
   ip_cidr_range = "10.0.1.0/24"
@@ -75,10 +79,11 @@ data "google_service_account" "default" {
 # Create a single Compute Engine instance
 resource "google_compute_instance" "default" {
   name         = "freedb"
-  machine_type = "e2-small"
+  machine_type = "e2-medium"
   zone         = "us-central1-a"
   tags         = ["ssh"]
   allow_stopping_for_update = true
+  description = "force_destroy ${local.force_destroy}"
 
   boot_disk {
     initialize_params {
@@ -90,6 +95,8 @@ resource "google_compute_instance" "default" {
     source = google_compute_disk.data.id
     device_name = google_compute_disk.data.name
   }
+
+  metadata_startup_script = "sudo apt update; sudo apt install -yq git"
 
   network_interface {
     subnetwork = google_compute_subnetwork.default.id
