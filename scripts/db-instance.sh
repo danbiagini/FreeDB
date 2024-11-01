@@ -2,18 +2,19 @@ sudo -u incus incus launch images:debian/12/cloud db1
 sudo -u incus incus exec db1 -- apt install -yq postgresql curl cron
 
 # https://wiki.debian.org/PostgreSql
-sudo adduser --system --shell /bin/bash --home /home/sportsoil sportsoil
-sudo -u postgres createuser sportsoil
-sudo -u sportsoil createdb -O sportsoil sportsoil
+sudo -u incus incus exec db1 -- sudo adduser --system --shell /bin/bash --home /home/sportsoil sportsoil
+sudo -u incus incus exec db1 -- sudo -u postgres createuser -d sportsoil
+sudo -u incus incus exec db1 -- sudo -u sportsoil createdb -O sportsoil sportsoil
 
 # add pg_hba entry for client and accept tcp connections
-
+sudo -u incus incus exec db1 -- sudo -u postgres sed -r -i.BAK "/#listen_addresses/a\listen_addresses = '*'" /etc/postgresql/15/main/postgresql.conf
 
 # add incus network forward to send postgres traffic from host to instance.  this will only
 # list on the internal address for database connections
+sudo -u incus incus network forward create incusbr0 
 
-#incus network forward create incusbr0 <internal address> 
-#incus network forward port add incusbr0 10.0.1.5 tcp 5432 10.233.59.196
+sudo -u incus incus network forward create incusbr0 10.0.1.14
+sudo -u incus incus network forward port add incusbr0 10.0.1.14 tcp 5432 10.0.0.224
 
 # https://cloud.google.com/iap/docs/using-tcp-forwarding#create-firewall-rule
 # to connect from G CloudShell 

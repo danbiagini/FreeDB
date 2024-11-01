@@ -26,6 +26,12 @@ resource "google_compute_address" "static-ip" {
 data "google_compute_network" "my-network" {
   name = "default"
 }
+
+data "google_compute_address" "db-internal-static-ip" {
+  name = "db-static-internal"
+  region = "us-central1"
+}
+
 resource "google_compute_router" "router" {
   name    = "nat-router"
   network = data.google_compute_network.my-network.name
@@ -105,6 +111,7 @@ resource "google_compute_instance" "default" {
       network_tier = "STANDARD"
       nat_ip = google_compute_address.static-ip.address
     }
+    network_ip = data.google_compute_address.db-internal-static-ip.address
   }
 
   service_account {

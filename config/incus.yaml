@@ -1,8 +1,8 @@
 config: {}
 networks:
 - config:
-    ipv4.address: auto
-    ipv6.address: auto
+    ipv4.address: 10.0.0.1/24
+    ipv6.address: none
   description: ""
   name: incusbr0
   type: ""
