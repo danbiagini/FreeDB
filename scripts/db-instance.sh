@@ -22,9 +22,15 @@ sudo -u incus incus network forward port add incusbr0 10.0.1.14 tcp 5432 10.0.0.
 sudo -u incus incus exec db1 -- sudo -u postgres cp /etc/postgresql/15/main/pg_hba.conf /etc/postgresql/15/main/pg_hba.conf.bak
 sudo -u incus incus exec db1 -- sudo -u postgres sh -c 'cat <<EOF >> /etc/postgresql/15/main/pg_hba.conf
 
-## FreeDB external connections
+## FreeDB host system and container connections
 host    all             all             10.0.0.1/24             trust
+
+## Gcloud tunneled clients
 hostssl all             all             35.235.240.0/20         md5
+
+## Gcloud VPC backend subnet
+hostssl all             all             10.0.1.0/24             md5
+
 EOF'
 
 # https://cloud.google.com/iap/docs/using-tcp-forwarding#create-firewall-rule
@@ -33,18 +39,8 @@ EOF'
 # setup nightly pg_dump cron job
 sudo -u incus incus exec db1 -- sudo -u postgres mkdir -p /var/lib/postgresql/backups
 
-# use apt instead of generic package
-# sudo -u incus incus exec db1 -- sudo -u postgres curl -o /var/lib/postgresql/tools/gcli.tar.gz https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-linux-x86_64.tar.gz
-# sudo -u incus incus exec db1 -- sudo -u postgres tar -C /var/lib/postgresql/tools -xzf /var/lib/postgresql/tools/gcli.tar.gz
-
-# setup the postgres user with bash and PATH after the gcloud install
-sudo -u incus incus exec db1 -- sudo -u postgres cp /etc/skel/.* /var/lib/postgresql/
-
 sudo -u incus incus exec db1 -- sh -c "curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg"
 sudo -u incus incus exec db1 -- sh -c "echo 'deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main' | sudo tee -a /etc/apt/sources.list.d/google-cloud-sdk.list"
 sudo -u incus incus exec db1 -- sh -c "apt-get update && apt-get install -yq google-cloud-cli"
 
-sudo -u incus incus exec db1 -- gcloud config set project puck-wax-schedule-helper
-
-# will need to copy the service account key file to the db1 instance
 
