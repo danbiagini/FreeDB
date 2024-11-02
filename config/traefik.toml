@@ -52,7 +52,9 @@
   # Optional
   # Default: os.Stdout
   #
-  # filePath = "log/traefik.log"
+  filePath = "log/traefik.log"
+  maxAge = 30
+  maxSize = 1
 
   # Format is either "json" or "common".
   #
@@ -123,12 +125,16 @@
   #
   # entryPoint = "traefik"
 
+##### Manual config backend
+[providers.file]
+  directory = "/home/traefik/config"
+
 ################################################################
 # Docker configuration backend
 ################################################################
 
-# Enable Docker configuration backend
-[providers.docker]
+# To Enable Docker configuration backend
+# [providers.docker]
 
   # Docker server endpoint. Can be a tcp or a unix socket endpoint.
   #
