@@ -30,6 +30,8 @@ sudo -u incus incus exec proxy1 -- sudo setcap 'cap_net_bind_service=+ep' /usr/l
 
 sudo -u incus incus exec proxy1 -- sudo mkdir /etc/traefik
 sudo -u incus incus exec proxy1 -- sudo mkdir /etc/traefik/acme
+sudo -u incus incus exec proxy1 -- sudo mkdir /etc/traefik/manual
+
 sudo -u incus incus exec proxy1 -- sudo chown -R root:root /etc/traefik
 sudo -u incus incus exec proxy1 -- sudo chown -R traefik:traefik /etc/traefik/acme
 
