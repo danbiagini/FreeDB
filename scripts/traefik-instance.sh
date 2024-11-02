@@ -11,7 +11,7 @@ sudo -u incus incus launch images:debian/12/cloud proxy1
 sudo -u incus incus exec proxy1 -- apt update
 sudo -u incus incus exec proxy1 -- apt install -yq git curl
 
-sudo -u incus incus exec proxy1 -- sudo adduser --system --shell /bin/bash --home /home/traefik traefik
+sudo -u incus incus exec proxy1 -- sudo adduser --system --group --shell /bin/bash --home /home/traefik traefik
 sudo -u incus incus exec proxy1 -- sudo usermod -aG sudo traefik
 
 # setup the traefik user with bash and PATH after the gcloud install
