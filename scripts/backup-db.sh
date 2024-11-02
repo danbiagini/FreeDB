@@ -34,8 +34,12 @@ fi
 # check if the fileName was created
 if [ -f "$BACKUP_DIRECTORY/$fileName" ]
 then
-gcloud storage mv $BACKUP_DIRECTORY/$fileName gs://freedb-backup/$(hostname)/$fileName
+gcloud storage cp $BACKUP_DIRECTORY/$fileName gs://freedb-backup/$(hostname)/$fileName
 echo "Backup of $1 completed successfully: $fileName"
+
+# let's delete any backup files older than 1 month from the backup directory
+find $BACKUP_DIRECTORY -type f -mtime +30 -delete
+
 else
 echo "Backup of $1 failed"
 fi
