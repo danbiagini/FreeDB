@@ -38,7 +38,8 @@ sudo -u incus incus file push  "$TRAEFIK_CONFIG_PATH" proxy1/etc/traefik/
 sudo -u incus incus exec proxy1 -- sudo chown root:root /etc/traefik/traefik.toml
 sudo -u incus incus exec proxy1 -- sudo chmod 644 /etc/traefik/traefik.toml
 
-sudo -u incus incus file push "${CONFIG_DIR}/traefik.service" /etc/systemd/system/
+echo "pushing ${CONFIG_DIR}/traefik.service to proxy1/etc/systemd/system/"
+sudo -u incus incus file push "${CONFIG_DIR}/traefik.service" proxy1/etc/systemd/system/
 
 sudo -u incus incus exec proxy1 -- sudo chown root:root /etc/systemd/system/traefik.service
 sudo -u incus incus exec proxy1 -- sudo chmod 644 /etc/systemd/system/traefik.service
