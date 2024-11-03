@@ -4,10 +4,6 @@ variable "service_account_id" {
  description = "Service account for the EC2 instance"
 }
 
-locals {
-  force_destroy = "103024"
-}
-
 resource "google_compute_subnetwork" "default" {
   name          = "backend-subnet"
   ip_cidr_range = "10.0.1.0/24"
@@ -32,11 +28,11 @@ data "google_compute_address" "db-internal-static-ip" {
   region = "us-central1"
 }
 
-resource "google_compute_router" "router" {
-  name    = "nat-router"
-  network = data.google_compute_network.my-network.name
-  region  = "us-central1"
-}
+# resource "google_compute_router" "router" {
+#    name    = "nat-router"
+#    network = data.google_compute_network.my-network.name
+#    region  = "us-central1"
+# }
 
 # still need to add Cloud NAT service to the router, not supported in terraform yet
 # https://cloud.google.com/nat/docs/gce-example#console_5
@@ -50,7 +46,7 @@ resource "google_compute_firewall" "default" {
     ports    = ["5432", "22", "8080"]
   }
   source_ranges = ["35.235.240.0/20"]
-
+  source_tags   = ["ssh"]
 }
 
 resource "google_compute_firewall" "no-rdp-rule" {
@@ -62,6 +58,29 @@ resource "google_compute_firewall" "no-rdp-rule" {
     ports    = ["22","3389"]
   }
   source_ranges = ["0.0.0.0/0"]
+}
+
+resource "google_compute_firewall" "web" {
+  name    = "web-internal-firewall"
+  network = data.google_compute_network.my-network.name
+  priority = 1000
+  allow {
+    protocol = "tcp"
+    ports    = ["80", "443"]
+  }
+  source_tags = ["ssh"]
+}
+
+resource "google_compute_firewall" "proxy" {
+  name    = "proxy-firewall"
+  network = data.google_compute_network.my-network.name
+  priority = 1000
+  allow {
+    protocol = "tcp"
+    ports    = ["80", "443"]
+  }
+  source_ranges = ["0.0.0.0/0"]
+  target_tags = ["web"]
 }
 
 # Using pd-balanced because it's faster for Compute Engine
@@ -87,9 +106,8 @@ resource "google_compute_instance" "default" {
   name         = "freedb"
   machine_type = "e2-medium"
   zone         = "us-central1-a"
-  tags         = ["ssh"]
+  tags         = ["ssh", "web"]
   allow_stopping_for_update = true
-  description = "force_destroy ${local.force_destroy}"
 
   boot_disk {
     initialize_params {
@@ -140,6 +158,10 @@ resource "google_compute_instance" "freedb-cvat" {
 
   network_interface {
     subnetwork = google_compute_subnetwork.default.id
+    access_config {
+      # Include this section to give the VM an external IP address
+      network_tier = "STANDARD"
+    }
   }
 
   service_account {

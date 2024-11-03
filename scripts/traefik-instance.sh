@@ -34,6 +34,7 @@ sudo -u incus incus exec proxy1 -- sudo mkdir /etc/traefik/manual
 
 sudo -u incus incus exec proxy1 -- sudo chown -R root:root /etc/traefik
 sudo -u incus incus exec proxy1 -- sudo chown -R traefik:traefik /etc/traefik/acme
+sudo -u incus incus exec proxy1 -- sudo chown -R traefik:traefik /etc/traefik/manual
 
 sudo -u incus incus file push  "$TRAEFIK_CONFIG_PATH" proxy1/etc/traefik/
 
@@ -48,6 +49,5 @@ sudo -u incus incus exec proxy1 -- sudo chmod 644 /etc/systemd/system/traefik.se
 sudo -u incus incus exec proxy1 -- sudo systemctl daemon-reload
 sudo -u incus incus exec proxy1 -- sudo systemctl start traefik.service
 
-#sudo -u incus incus network forward port add incusbr0 10.0.1.14 tcp 80,443,8080 <proxy1-ip>
-
-#sudo -u incus incus exec proxy1 -- sudo -u traefik -i traefik --configFile=FreeDB/config/traefik.toml
+# this works since the proxy1 instance will have a DHCP ipv4 address for eth0 
+sudo -u incus incus network forward port add incusbr0 10.0.1.14 tcp 80,443,8080 $(sudo -u incus incus query '/1.0/instances/proxy1?recursion=1' | jq -r '.state.network.eth0.addresses[] | select(.family == "inet") | .address')
