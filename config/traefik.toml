@@ -28,6 +28,13 @@
   [entryPoints.websecure]
     address = ":443"
 
+[certificatesResolvers.myresolver.acme]
+  email = "example@example.com"
+  storage = "/etc/traefik/acme/acme.json"
+
+  [certificatesResolvers.myresolver.acme.httpChallenge]
+    entrPoint = "web"
+
 ################################################################
 # Traefik logs configuration
 ################################################################

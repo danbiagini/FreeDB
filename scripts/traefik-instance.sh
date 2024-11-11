@@ -51,3 +51,4 @@ sudo -u incus incus exec proxy1 -- sudo systemctl start traefik.service
 
 # this works since the proxy1 instance will have a DHCP ipv4 address for eth0 
 sudo -u incus incus network forward port add incusbr0 10.0.1.14 tcp 80,443,8080 $(sudo -u incus incus query '/1.0/instances/proxy1?recursion=1' | jq -r '.state.network.eth0.addresses[] | select(.family == "inet") | .address')
+

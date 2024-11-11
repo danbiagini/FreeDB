@@ -1,13 +1,15 @@
 sudo apt-get update
-sudo apt-get install -yq postgresql-client-15 git curl
+sudo apt-get install -yq postgresql-client-16 git curl
 
 #setup disk and mount
 # find the dev/<name> of the device to mount.  You can use ls -l /dev/disk/by-id/google-*
-#sudo mkfs.ext4 -m 0 -E lazy_itable_init=0,lazy_journal_init=0,discard /dev/sdb
-sudo mkdir -p /media/cvat-data
-sudo mount -o discard,defaults /dev/sdb /media/cvat-data
+
+# this wipes the disk so leave it commented out for now
+# sudo mkfs.ext4 -m 0 -E lazy_itable_init=0,lazy_journal_init=0,discard /dev/disk/by-id/google-cvat-data-1 
+sudo mkdir -p /mnt/cvat-data
+sudo mount -o discard,defaults /dev/disk/by-id/google-cvat-data-1 /mnt/cvat-data
 sudo cp /etc/fstab /etc/fstab.backup-$(date +%s)
-echo "UUID=$(sudo blkid /dev/sdb | cut -d '"' -f 2) /media/cvat-data ext4 discard,defaults 0 2" | sudo tee -a /etc/fstab > /dev/null
+echo "/dev/disk/by-id/google-cvat-data-1 /mnt/cvat-data ext4 discard,defaults,nofail 0 2" | sudo tee -a /etc/fstab > /dev/null
 
 sudo apt-get --no-install-recommends install -y \
   apt-transport-https \
@@ -29,14 +31,23 @@ sudo apt-get --no-install-recommends install -y \
 sudo apt-get install -y \
   w3m w3m-img
 
-
 sudo groupadd docker
-sudo adduser --system --shell /bin/bash --home /home/cvat cvat
-sudo usermod -aG docker $USER
+sudo adduser --system --group --shell /bin/bash --home /home/cvat cvat
+sudo usermod -aG docker cvat
+sudo -u cvat cp /etc/skel/.* /home/cvat/
 
-git clone https://github.com/cvat-ai/cvat /media/cvat-data/cvat
-cd /media/cvat-data/cvat
-export CVAT_HOST=FQDN_or_YOUR-IP-ADDRESS
+git clone https://github.com/cvat-ai/cvat /mnt/cvat-data/cvat
+cd /mnt/cvat-data/cvat
 
-docker compose up -d
+cat <<EOF > .env
+export CVAT_HOST=${CVAT_DOMAIN}
+export CVAT_POSTGRES_HOST=freedb.${ZONE}.c.${PROJECT}.internal
+export CVAT_POSTGRES_DBNAME=cvat
+export CVAT_POSTGRES_USER=cvat
+export CVAT_POSTGRES_PASSWORD=${CVAT_DB_PASSWORD}
+
+EOF
+
+
+
 
