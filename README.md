@@ -19,3 +19,6 @@ https://docs.rockylinux.org/books/lxd_server/01-install/
 gcloud compute ssh --zone "us-central1-a" "freedb" --tunnel-through-iap
 
 
+## To connect to traefik dashboard using cloud shell tunnel
+- gcloud compute start-iap-tunnel --zone "us-central1-a" "freedb" 8080
+- Note the local port and connect with web preview on that port
