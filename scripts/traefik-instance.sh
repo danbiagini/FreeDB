@@ -31,12 +31,15 @@ sudo -u incus incus exec proxy1 -- sudo setcap 'cap_net_bind_service=+ep' /usr/l
 sudo -u incus incus exec proxy1 -- sudo mkdir /etc/traefik
 sudo -u incus incus exec proxy1 -- sudo mkdir /etc/traefik/acme
 sudo -u incus incus exec proxy1 -- sudo mkdir /etc/traefik/manual
+sudo -u incus incus exec proxy1 -- sudo mkdir /etc/gcp-credentials
+
 
 sudo -u incus incus exec proxy1 -- sudo chown -R root:root /etc/traefik
 sudo -u incus incus exec proxy1 -- sudo chown -R traefik:traefik /etc/traefik/acme
 sudo -u incus incus exec proxy1 -- sudo chown -R traefik:traefik /etc/traefik/manual
 
 sudo -u incus incus file push  "$TRAEFIK_CONFIG_PATH" proxy1/etc/traefik/
+sudo -u incus incus file push  "${CONFIG_DIR}/manual-cvat.yaml" proxy1/etc/traefik/manual/
 
 sudo -u incus incus exec proxy1 -- sudo chown root:root /etc/traefik/traefik.toml
 sudo -u incus incus exec proxy1 -- sudo chmod 644 /etc/traefik/traefik.toml
@@ -49,6 +52,8 @@ sudo -u incus incus exec proxy1 -- sudo chmod 644 /etc/systemd/system/traefik.se
 sudo -u incus incus exec proxy1 -- sudo systemctl daemon-reload
 sudo -u incus incus exec proxy1 -- sudo systemctl start traefik.service
 
+sudo -u incus incus exec proxy1 -- sudo chmod 755 /etc/gcp-credentials
+# manually move the service_account.json file to that directory
+
 # this works since the proxy1 instance will have a DHCP ipv4 address for eth0 
 sudo -u incus incus network forward port add incusbr0 10.0.1.14 tcp 80,443,8080 $(sudo -u incus incus query '/1.0/instances/proxy1?recursion=1' | jq -r '.state.network.eth0.addresses[] | select(.family == "inet") | .address')
-

@@ -129,9 +129,44 @@
   #
   # entryPoint = "traefik"
 
-##### Manual config backend
+################################################################
+# Cloud Saver Plugin
+# Turns off GCE instances when traffic drops below a threshold
+# https://plugins.traefik.io/plugins/673d5ed47dd5a6c3095befdc/cloud-saver
+#
+################################################################
+
+[experimental.plugins.traefik-cloud-saver]
+  moduleName = "github.com/danbiagini/traefik-cloud-saver"
+  version = "v0.1.2"
+
+
+[providers.plugin]
+
+  [providers.plugin.traefik-cloud-saver]
+    apiURL = "http://localhost:8080/api"
+    debug = "true"
+    metricsURL = "http://localhost:8080/metrics"
+    trafficThreshold = "1"
+    windowSize = "3h"
+
+    [providers.plugin.traefik-cloud-saver.cloudConfig]
+      region = "us-central1"
+      type = "gcp"
+      zone = "us-central1-a"
+
+      [providers.plugin.traefik-cloud-saver.cloudConfig.credentials]
+        secret = "/etc/gcp-credentials/service_account.json"
+        type = "service_account"
+
+
+#########################################################
+# Manual config backend
+#
+#########################################################
 [providers.file]
   directory = "/etc/traefik/manual"
+
 
 ################################################################
 # Docker configuration backend

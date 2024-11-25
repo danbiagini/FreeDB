@@ -10,6 +10,8 @@ Restart=on-abnormal
 User=traefik
 Group=traefik
 
+WorkingDirectory=/etc/traefik
+
 ; Always set "-root" to something safe in case it gets forgotten in the traefikfile.
 ExecStart=/usr/local/bin/traefik --configfile=/etc/traefik/traefik.toml
 
@@ -26,7 +28,7 @@ ProtectHome=true
 ProtectSystem=full
 ; … except /etc/ssl/traefik, because we want Letsencrypt-certificates there.
 ;   This merely retains r/w access rights, it does not add any new. Must still be writable on the host!
-ReadWriteDirectories=/etc/traefik/acme
+ReadWriteDirectories=/etc/traefik/acme /etc/traefik/plugins-storage
 
 ; The following additional security directives only work with systemd v229 or later.
 ; They further restrict privileges that can be gained by traefik. Uncomment if you like.

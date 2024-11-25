@@ -1,0 +1,14 @@
+http:
+  routers:
+    cvat-router:
+      entryPoints:
+        - "websecure"
+      rule: "Host(`$CVAT_HOST`)"
+      service: cvat
+      tls:
+        certResolver: myresolver
+  services:
+    cvat:
+      loadBalancer:
+        servers:
+          - url: "http://cvat.$ZONE.c.$PROJECT.internal:8080/"
