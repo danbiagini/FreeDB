@@ -1,5 +1,5 @@
 # FreeDB
-Infra as Code for setting up free database
+Infra as Code for setting up free (as in speech) database, ML pipelines, app stack, etc
 
 https://mihaibojin.medium.com/deploy-and-configure-google-compute-engine-vms-with-terraform-f6b708b226c1
 
