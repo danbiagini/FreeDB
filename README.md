@@ -29,6 +29,12 @@ I've used serverless on a number of platforms (GCP, AWS, Heroku, Azure) and the 
 
 My first experience with a serverless budget issue was hosting a [streamlit](https://streamlit.io/) app on Cloud Run and a user left their browser window open on my [SportsOil app](https://app.sportsiol.co) for days[^1].  This caused the Cloud Run instance to remain provisioned "up" until I noticed the budget alert had triggered.  Oops.
 
+### Tech Stack
+- Incus
+- Traefik (HTTP proxy), using [Cloud Saver](https://plugins.traefik.io/plugins/673d5ed47dd5a6c3095befdc/cloud-saver) plugin
+- Postgres
+- Docker
+- cvat (actually [cvat light](https://github.com/danbiagini/cvat-light) )
 
 ## Terraform & GCP Architecture
 
