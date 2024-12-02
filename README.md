@@ -34,7 +34,7 @@ My first experience with a serverless budget issue was hosting a [streamlit](htt
 - Traefik (HTTP proxy), using [Cloud Saver](https://plugins.traefik.io/plugins/673d5ed47dd5a6c3095befdc/cloud-saver) plugin
 - Postgres
 - Docker
-- cvat (actually [cvat light](https://github.com/danbiagini/cvat-light) )
+- [cvat light](https://github.com/danbiagini/cvat-light) which is a cvat "light overlay"; includes some common self hosted cvat relevant bugs patched and configurable support for email notifications. 
 
 ## Terraform & GCP Architecture
 
@@ -42,13 +42,16 @@ My first experience with a serverless budget issue was hosting a [streamlit](htt
 
 # Usage 
 
-## To Run
+## To Deploy / Provision
 1. terraform plan -var-file=values.tfvars
 1. terraform apply -var-file=values.tfvars
+2. ssh to the FreeDB host (see below for connection instructions), and git pull this repo
+3. setup incus using scripts/incus.sh (will need some manual intervention for the zfs install)
+4. setup traefik using scripts/traefik-instance.sh
+5. setup db using scripts/db-instance.sh
+6. ssh to cvat host, git pull this repo and run scripts/cvat-instance.sh  (you'll need to set the env variables)
 
-## To Connect
-
-### From cloud shell
+### ssh From cloud shell
 gcloud compute ssh --zone "us-central1-a" "freedb" --tunnel-through-iap
 
 
