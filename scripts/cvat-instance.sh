@@ -36,7 +36,7 @@ sudo adduser --system --group --shell /bin/bash --home /home/cvat cvat
 sudo usermod -aG docker cvat
 sudo -u cvat cp /etc/skel/.* /home/cvat/
 
-git clone https://github.com/cvat-ai/cvat /mnt/cvat-data/cvat
+git clone https://github.com/danbiagini/cvat-light /mnt/cvat-data/cvat
 cd /mnt/cvat-data/cvat
 
 cat <<EOF > .env
