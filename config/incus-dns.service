@@ -1,0 +1,16 @@
+[Unit]
+Description=Incus per-link DNS configuration for incusbr0
+BindsTo=sys-subsystem-net-devices-incusbr0.device
+After=sys-subsystem-net-devices-incusbr0.device
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/resolvectl dns incusbr0 10.0.0.1
+ExecStart=/usr/bin/resolvectl domain incusbr0 ~incus
+ExecStart=/usr/bin/resolvectl dnssec incusbr0 off
+ExecStart=/usr/bin/resolvectl dnsovertls incusbr0 off
+ExecStopPost=/usr/bin/resolvectl revert incusbr0
+RemainAfterExit=yes
+
+[Install]
+WantedBy=sys-subsystem-net-devices-incusbr0.device

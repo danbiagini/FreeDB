@@ -36,3 +36,33 @@ sudo -u incus cp /etc/skel/.* /home/incus/
 #incus storage create pd-standard zfs source=/dev/sdb
 #incus profile copy default v1
 #incus profile edit v1 # switch to the new storage pool
+
+# TO setup incus to be able to launch containers from gcloud artifact registry
+
+
+# First, let's create a temporary variable with the base64 encoded credentials
+AUTH_STRING=$(echo -n "_json_key:$(cat ~/key.json)" | base64 -w0)
+
+# Now create the auth.json file
+sudo -u incuscat > ~/.config/containers/auth.json << EOF
+{
+  "auths": {
+    "us-central1-docker.pkg.dev": {
+      "auth": "${AUTH_STRING}"
+    }
+  }
+}
+EOF
+
+echo "Setting incus environment variable for use by skopeo"
+# Custom environment for freeDB w/ OCI container support 
+echo "# Setup for incus w/ OCI container support" >> /etc/default/incus
+echo "XDG_RUNTIME_DIR=/home/incus/.config" >> /etc/default/incus
+
+incus remote add gcr https://us-central1-docker.pkg.dev
+# incus launch gcr:PROJECT-ID/REPOSITORY/IMAGE
+
+# Setup DNS for incus
+sudo cp config/incus-dns.service /etc/systemd/system/incus-dns-incusbr0.service
+sudo systemctl enable incus-dns-incusbr0.service
+sudo systemctl start incus-dns-incusbr0.service
