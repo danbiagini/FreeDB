@@ -1,28 +1,39 @@
-incus launch images:debian/12/cloud proxy1 --profile v1
-incus exec proxy1 -- apt update
-incus exec proxy1 -- apt install -yq git curl
+#!/bin/bash
 
-incus exec proxy1 -- sudo adduser --system --shell /bin/bash --home /home/traefik traefik
-incus exec proxy1 -- sudo usermod -aG sudo traefik
-# setup the postgres user with bash and PATH after the gcloud install
-incus exec proxy1 -- cp .bashrc /home/traefik/
-incus exec proxy1 -- cp .profile /home/traefik/
-incus exec proxy1 -- chown traefik /home/traefik/.bashrc 
-incus exec proxy1 -- chown traefik /home/traefik/.profile
+# Take the following arguments:
+#  instance -  the name of the instance to deploy
+#  remote -  the incus remote image server to pull the imge from
+#  image -  the incus remote image server to pull the imge from (optionally include the :tag to deploy)
+# If the instance does not exist, create it.  
+# If the instance exists, update it.
 
-incus exec proxy1 -- sudo -u -i git clone https://github.com/danbiagini/FreeDB.git
+# Example:
+# ./deploy-incus.sh my-instance my-incus-remote my-image:my-tag
 
-# check version of traefik
-#incus exec proxy1 -- sudo -u traefik -i curl -L 'https://github.com/traefik/traefik/releases/download/v3.1.6/traefik_v3.1.6_linux_amd64.tar.gz' > traefik_v3.1.6.tar.gz
-#incus exec proxy1 -- sudo -u traefik -i tar -xzvf traefik_v3.1.6.tar.gz 
+# Check the arguments
 
-#incus exec proxy1 -- sudo -u traefik -i traefik --configFile=FreeDB/config/traefik.toml
+if [ -z "$1" ] || [ -z "$2" ] || [ -z "$3" ]; then
+    echo "Usage: $(basename "$0") <instance> <remote> <image:tag>"
+    exit 1
+fi
 
-incus network forward port add incusbr0 10.0.1.5 tcp 80,443,8080 10.233.59.32
+# First check if the instance exists from "incus list", using awk for exact match
+if incus list | awk '{print $2}' | grep -x "$1" > /dev/null; then
+    # Let's ask the user if they want to delete the instance
+    read -p "Instance $1 exists. Do you want to delete it? (y/n) " answer
+    if [ "$answer" == "y" ]; then
+        incus delete $1 --force
+    else
+        echo "Instance $1 not deleted, proceeding..."
+    fi
+fi
 
-# https://cloud.google.com/iap/docs/using-tcp-forwarding#create-firewall-rule
-# to connect from G CloudShell 
+# check for .env file in the current directory with the instance name, for example sportsoil-stage.env
 
-# to connect to dash
-# gcloud compute start-iap-tunnel freedb 8080 --local-host-port=localhost:8080
-# 'preview on port 8080' in cloud shell 
+if [ -f $1.env ]; then
+    env_file="--environment-file $1.env"
+fi
+
+# Now create the instance.
+incus launch $2:$3 $1 --profile default $env_file
+

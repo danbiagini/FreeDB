@@ -44,7 +44,7 @@ sudo -u incus cp /etc/skel/.* /home/incus/
 AUTH_STRING=$(echo -n "_json_key:$(cat ~/key.json)" | base64 -w0)
 
 # Now create the auth.json file
-sudo -u incuscat > ~/.config/containers/auth.json << EOF
+sudo -u incus cat > ~/.config/containers/auth.json << EOF
 {
   "auths": {
     "us-central1-docker.pkg.dev": {
