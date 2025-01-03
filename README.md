@@ -2,7 +2,7 @@
 Infra as Code for setting up *free* (as in speech) app stack; proxy, database, Computer Vision ML pipeline using terraform & [Linux Containers](https://linuxcontainers.org/) on GCP.
 
 # Rationale (Why)?
-I have been doing side / hobby software and tech projects for years, and often chose the "free" version of a platform, or sometimes pay for the "hobby" tier.  This works pretty well, however it's easy to get caught in one of the following situations with having to either accept poor service for the users vs paying a higher bill:
+I have been doing side / hobby software and tech projects for years, and often choose the "free" version of a platform, or sometimes pay for the "hobby" tier.  This works pretty well, however it's easy to get caught in one of the following situations with having to either accept poor service for the users vs paying a higher bill:
 1. Usage is so rare that the project infra / service gets paused, and then doesn't work the "one time" someone is actually trying to use it.
 2. Usage is bursty and you end up exceeding the quota for a small period.  For example, with serverless you are left with the choice of paying more, or not meeting the needs of the users.
 
