@@ -66,3 +66,8 @@ incus remote add gcr https://us-central1-docker.pkg.dev
 sudo cp config/incus-dns.service /etc/systemd/system/incus-dns-incusbr0.service
 sudo systemctl enable incus-dns-incusbr0.service
 sudo systemctl start incus-dns-incusbr0.service
+
+# Setup incus deploy container helper script
+sudo -u incus mkdir ~/deploy
+sudo -u incus cp scripts/deploy-container.sh ~/deploy/
+sudo -u incus chmod +x ~/deploy/deploy-container.sh
