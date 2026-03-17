@@ -1,0 +1,3 @@
+env                = "test"
+subnet_cidr        = "10.0.2.0/24"
+service_account_id = "your-service-account-id"
