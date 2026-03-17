@@ -77,10 +77,19 @@ git clone https://github.com/danbiagini/FreeDB.git
 cd FreeDB
 git checkout v0.2
 ```
-3. setup incus using platform/scripts/incus.sh (will need some manual intervention for the zfs install)
-4. setup traefik using platform/scripts/traefik-instance.sh
-5. setup db using platform/scripts/db-instance.sh
-6. deploy apps using the TUI or app-specific scripts in apps/
+3. setup incus (will need some manual intervention for the zfs install):
+```bash
+./platform/scripts/incus.sh
+```
+4. setup traefik:
+```bash
+./platform/scripts/traefik-instance.sh
+```
+5. setup db:
+```bash
+./platform/scripts/db-instance.sh
+```
+6. deploy apps using the TUI or app-specific scripts in `apps/`
 
 
 ### To connect to traefik dashboard using cloud shell tunnel
