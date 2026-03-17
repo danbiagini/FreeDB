@@ -1,10 +1,20 @@
 #!/bin/bash
 set -euo pipefail
 
-KEY_FILE="${1:-$HOME/key.json}"
+# Get or generate a service account key for artifact registry auth
+KEY_FILE="${1:-}"
+if [ -z "$KEY_FILE" ]; then
+  KEY_FILE="/tmp/freedb-sa-key.json"
+  echo "No key file specified, generating one from instance service account..."
+  SA_EMAIL=$(curl -s -H "Metadata-Flavor: Google" \
+    http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/email)
+  gcloud iam service-accounts keys create "$KEY_FILE" --iam-account="$SA_EMAIL"
+  GENERATED_KEY=true
+fi
+
 if [ ! -f "$KEY_FILE" ]; then
-  echo "Usage: sudo $0 [/path/to/key.json]"
   echo "Error: Service account key not found at $KEY_FILE"
+  echo "Usage: $0 [/path/to/key.json]"
   exit 1
 fi
 
@@ -70,7 +80,11 @@ sudo -u incus tee /home/incus/.config/containers/auth.json > /dev/null << EOF
 }
 EOF
 
-# Note: ~/key.json can be removed after setup if no longer needed
+# Clean up generated key if we created it
+if [ "${GENERATED_KEY:-false}" = true ]; then
+  rm -f "$KEY_FILE"
+  echo "Cleaned up generated service account key"
+fi
 
 echo "Setting incus environment variables for OCI container support"
 # Custom environment for freeDB w/ OCI container support

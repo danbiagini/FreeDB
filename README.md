@@ -79,8 +79,9 @@ git checkout v0.2
 ```
 3. setup incus (will need some manual intervention for the zfs install):
 ```bash
-./platform/scripts/incus.sh /path/to/key.json
+./platform/scripts/incus.sh
 ```
+This auto-generates a service account key from the instance metadata. You can also pass a key file explicitly: `./platform/scripts/incus.sh /path/to/key.json`
 4. setup traefik:
 ```bash
 ./platform/scripts/traefik-instance.sh
