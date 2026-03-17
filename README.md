@@ -1,5 +1,5 @@
 # FreeDB
-Infra as Code for setting up *free* (as in speech) app stack; proxy, database, Computer Vision ML pipeline using terraform & [Linux Containers](https://linuxcontainers.org/) on GCP.
+Infra as Code for setting up *free* (as in speech) app stack; proxy, database, Computer Vision ML pipeline using tofu & [Linux Containers](https://linuxcontainers.org/) on GCP.
 
 # Rationale (Why)?
 I have been doing side / hobby software and tech projects for years, and often choose the "free" version of a platform, or sometimes pay for the "hobby" tier.  This works pretty well, however it's easy to get caught in one of the following situations with having to either accept poor service for the users vs paying a higher bill:
@@ -9,7 +9,7 @@ I have been doing side / hobby software and tech projects for years, and often c
 The other issue is that hobby / side projects are often left dormant for weeks or months, and when provisioned with ClickOps there is no documentation as to what the infrastructure is, how its setup, how to change it, etc.  This can be costly in time; which could be better spent working on the project itself.
 
 # Solution 
-FreeDB provisions the following GCP resources using terraform:
+FreeDB provisions the following GCP resources using tofu:
 1. Two GCP Compute Instances (FreeDB and cvat)
 2. A backend subnet for inter instance communication (database, HTTP via proxy)
 3. Two external IP addresses (one for HTTPs proxy, the other for outbound internet traffic from cvat)
@@ -36,36 +36,36 @@ My first experience with a serverless budget issue was hosting a [streamlit](htt
 - Docker
 - [cvat light](https://github.com/danbiagini/cvat-light) which is a cvat "light overlay"; includes some common self hosted cvat relevant bugs patched and configurable support for email notifications. 
 
-## Terraform & GCP Architecture
+## OpenTofu & GCP Architecture
 
 ![FreeDB-terraform](https://github.com/user-attachments/assets/9ff95c71-507a-4b22-b406-01e39894c1df)
 
 # Usage 
 
 ## First-time Bootstrap (state bucket)
-The Terraform state is stored in a GCS bucket. On first setup, create it before `terraform init`:
+The OpenTofu state is stored in a GCS bucket. On first setup, create it before `tofu init`:
 ```bash
 cd infra
 gcloud storage buckets create gs://freedb-tf-state --location=us-central1 --uniform-bucket-level-access
-terraform init
+tofu init
 ```
 
 ## To Deploy / Provision
 ```bash
 cd infra
-terraform plan -var-file=values.tfvars
-terraform apply -var-file=values.tfvars
+tofu plan -var-file=values.tfvars
+tofu apply -var-file=values.tfvars
 ```
 
 ### Creating a test environment
 ```bash
 cd infra
-terraform workspace new test
-terraform apply -var-file=test.tfvars
+tofu workspace new test
+tofu apply -var-file=test.tfvars
 ```
 See `test.tfvars.example` for required variables.
 
-### Steps after terraform apply
+### Steps after tofu apply
 1. ssh to the FreeDB host (see below for connection instructions), and git pull this repo
 3. setup incus using platform/scripts/incus.sh (will need some manual intervention for the zfs install)
 4. setup traefik using platform/scripts/traefik-instance.sh
