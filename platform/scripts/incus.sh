@@ -1,3 +1,6 @@
+#!/bin/bash
+set -euo pipefail
+
 # needed for zabbly package install (a more recent version for debian 12).
 # https://github.com/zabbly/incus
 sudo curl -fsSL https://pkgs.zabbly.com/key.asc -o /etc/apt/keyrings/zabbly.asc
@@ -17,11 +20,14 @@ sudo apt-get install -yq postgresql-client-15
 
 sudo sed -r -i'.BAK' 's/^Components(.*)$/Components\1 contrib/g' /etc/apt/sources.list.d/debian.sources
 # sudo apt install zfsutils-linux
-sudo deluser incus
-sudo adduser --system --shell /bin/bash --home /home/incus incus
-sudo usermod -aG incus-admin incus 
+if ! id incus &>/dev/null; then
+  sudo adduser --system --shell /bin/bash --home /home/incus incus
+else
+  echo "User 'incus' already exists, skipping creation"
+fi
+sudo usermod -aG incus-admin incus
 sudo usermod -aG sudo incus
-sudo -u incus cp /etc/skel/.* /home/incus/
+sudo -u incus cp /etc/skel/.* /home/incus/ 2>/dev/null || true
 
 # this command must be interactive because the zfs install has a license warning
 # apt install linux-headers-cloud-amd64 zfsutils-linux zfs-dkms zfs-zed
@@ -44,7 +50,8 @@ sudo -u incus cp /etc/skel/.* /home/incus/
 AUTH_STRING=$(echo -n "_json_key:$(cat ~/key.json)" | base64 -w0)
 
 # Now create the auth.json file
-sudo -u incus cat > ~/.config/containers/auth.json << EOF
+sudo -u incus mkdir -p /home/incus/.config/containers
+sudo -u incus tee /home/incus/.config/containers/auth.json > /dev/null << EOF
 {
   "auths": {
     "us-central1-docker.pkg.dev": {
@@ -54,10 +61,16 @@ sudo -u incus cat > ~/.config/containers/auth.json << EOF
 }
 EOF
 
+# Note: ~/key.json can be removed after setup if no longer needed
+
 echo "Setting incus environment variable for use by skopeo"
-# Custom environment for freeDB w/ OCI container support 
-echo "# Setup for incus w/ OCI container support" >> /etc/default/incus
-echo "XDG_RUNTIME_DIR=/home/incus/.config" >> /etc/default/incus
+# Custom environment for freeDB w/ OCI container support
+if ! grep -q "XDG_RUNTIME_DIR" /etc/default/incus 2>/dev/null; then
+  echo "# Setup for incus w/ OCI container support" >> /etc/default/incus
+  echo "XDG_RUNTIME_DIR=/home/incus/.config" >> /etc/default/incus
+else
+  echo "XDG_RUNTIME_DIR already configured in /etc/default/incus, skipping"
+fi
 
 incus remote add gcr https://us-central1-docker.pkg.dev
 # incus launch gcr:PROJECT-ID/REPOSITORY/IMAGE

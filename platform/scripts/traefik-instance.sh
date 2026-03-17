@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 
 # Get the directory of the currently running script
 SCRIPT_DIR=$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
@@ -6,6 +7,8 @@ SCRIPT_DIR=$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 # Construct the full path to the traefik.toml file
 CONFIG_DIR="${SCRIPT_DIR}/../config"
 TRAEFIK_CONFIG_PATH="${CONFIG_DIR}/traefik.toml"
+
+TRAEFIK_VERSION="${TRAEFIK_VERSION:-3.1.7}"
 
 sudo -u incus incus launch images:debian/12/cloud proxy1
 sudo -u incus incus exec proxy1 -- apt update
@@ -19,9 +22,10 @@ sudo -u incus incus exec proxy1 -- sudo -u traefik cp /etc/skel/.* /home/traefik
 
 
 # check version of traefik
-echo "Installing traefik hard coded version 3.1.7, should check for updated versions at 'https://github.com/traefik/traefik/releases'"
-sudo -u incus incus exec proxy1 -- sudo -u traefik -i sh -c "curl -L 'https://github.com/traefik/traefik/releases/download/v3.1.7/traefik_v3.1.7_linux_amd64.tar.gz' > traefik_v3.1.7.tar.gz"
-sudo -u incus incus exec proxy1 -- sudo -u traefik -i tar -xzvf traefik_v3.1.7.tar.gz 
+echo "Installing traefik version ${TRAEFIK_VERSION} (override with TRAEFIK_VERSION env var)"
+echo "Check for updates at https://github.com/traefik/traefik/releases"
+sudo -u incus incus exec proxy1 -- sudo -u traefik -i sh -c "curl -L 'https://github.com/traefik/traefik/releases/download/v${TRAEFIK_VERSION}/traefik_v${TRAEFIK_VERSION}_linux_amd64.tar.gz' > traefik_v${TRAEFIK_VERSION}.tar.gz"
+sudo -u incus incus exec proxy1 -- sudo -u traefik -i tar -xzvf "traefik_v${TRAEFIK_VERSION}.tar.gz"
 
 sudo -u incus incus exec proxy1 -- sudo cp /home/traefik/traefik /usr/local/bin/
 sudo -u incus incus exec proxy1 -- sudo chown root:root /usr/local/bin/traefik
@@ -39,7 +43,6 @@ sudo -u incus incus exec proxy1 -- sudo chown -R traefik:traefik /etc/traefik/ac
 sudo -u incus incus exec proxy1 -- sudo chown -R traefik:traefik /etc/traefik/manual
 
 sudo -u incus incus file push  "$TRAEFIK_CONFIG_PATH" proxy1/etc/traefik/
-sudo -u incus incus file push  "${CONFIG_DIR}/manual-cvat.yaml" proxy1/etc/traefik/manual/
 
 sudo -u incus incus exec proxy1 -- sudo chown root:root /etc/traefik/traefik.toml
 sudo -u incus incus exec proxy1 -- sudo chmod 644 /etc/traefik/traefik.toml

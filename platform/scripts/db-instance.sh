@@ -1,5 +1,13 @@
+#!/bin/bash
+set -euo pipefail
+
+# Get the directory of the currently running script
+SCRIPT_DIR=$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+REPO_ROOT="${SCRIPT_DIR}/../.."
+
 sudo -u incus incus launch images:debian/12/cloud db1
-sudo -u incus incus exec db1 -- apt install -yq postgresql curl cron git
+sudo -u incus incus exec db1 -- apt update
+sudo -u incus incus exec db1 -- apt install -yq postgresql curl cron
 
 # setup the postgres user with dot files
 sudo -u incus incus exec db1 -- sudo -u postgres cp /etc/skel/.* /var/lib/postgresql/
@@ -39,10 +47,14 @@ EOF'
 # setup nightly pg_dump cron job
 sudo -u incus incus exec db1 -- sudo -u postgres mkdir -p /var/lib/postgresql/backups
 sudo -u incus incus exec db1 -- sudo -u postgres mkdir -p /var/lib/postgresql/tools
-sudo -u incus incus exec db1 -- sudo -u postgres git clone https://github.com/danbiagini/FreeDB.git tools/FreeDB
+
+# Push backup script and cron file directly instead of cloning the whole repo
+sudo -u incus incus file push "${REPO_ROOT}/ops/backup-db.sh" db1/var/lib/postgresql/tools/
+sudo -u incus incus exec db1 -- chmod +x /var/lib/postgresql/tools/backup-db.sh
+sudo -u incus incus file push "${REPO_ROOT}/ops/db1.cron" db1/var/lib/postgresql/tools/
 
 sudo -u incus incus exec db1 -- sh -c "curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg"
 sudo -u incus incus exec db1 -- sh -c "echo 'deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main' | sudo tee -a /etc/apt/sources.list.d/google-cloud-sdk.list"
 sudo -u incus incus exec db1 -- sh -c "apt-get update && apt-get install -yq google-cloud-cli"
 
-sudo -u incus incus exec db1 -- sudo -u postgres crontab /var/lib/postgresql/tools/FreeDB/ops/db1.cron
+sudo -u incus incus exec db1 -- sudo -u postgres crontab /var/lib/postgresql/tools/db1.cron

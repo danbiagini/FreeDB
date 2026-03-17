@@ -1,3 +1,6 @@
+#!/bin/bash
+set -euo pipefail
+
 sudo apt-get update
 sudo apt-get install -yq postgresql-client-16 git curl
 
@@ -18,11 +21,12 @@ sudo apt-get --no-install-recommends install -y \
   gnupg-agent \
   software-properties-common
 
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
-sudo add-apt-repository \
-  "deb [arch=amd64] https://download.docker.com/linux/ubuntu \
-  $(lsb_release -cs) \
-  stable"
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+sudo chmod a+r /etc/apt/keyrings/docker.gpg
+echo \
+  "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+  $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
 sudo apt-get update
 sudo apt-get --no-install-recommends install -y \
   docker-ce docker-ce-cli containerd.io docker-compose-plugin
@@ -35,6 +39,13 @@ sudo groupadd docker
 sudo adduser --system --group --shell /bin/bash --home /home/cvat cvat
 sudo usermod -aG docker cvat
 sudo -u cvat cp /etc/skel/.* /home/cvat/
+
+# Push CVAT traefik route to the proxy container
+SCRIPT_DIR=$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+if [ -f "${SCRIPT_DIR}/manual-cvat.yaml" ]; then
+  echo "Pushing CVAT traefik route to proxy1"
+  sudo -u incus incus file push "${SCRIPT_DIR}/manual-cvat.yaml" proxy1/etc/traefik/manual/
+fi
 
 git clone https://github.com/danbiagini/cvat-light /mnt/cvat-data/cvat
 cd /mnt/cvat-data/cvat

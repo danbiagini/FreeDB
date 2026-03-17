@@ -1,4 +1,6 @@
 #!/bin/bash
+set -euo pipefail
+
 # This script will backup the postgresql database
 # and store it in a specified directory
  
