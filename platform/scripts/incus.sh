@@ -107,7 +107,7 @@ echo "Setting incus environment variables for OCI container support"
 # XDG_RUNTIME_DIR is needed for skopeo auth
 # TMPDIR points OCI image staging to the persistent disk to avoid filling the boot disk
 if ! grep -q "XDG_RUNTIME_DIR" /etc/default/incus 2>/dev/null; then
-  cat >> /etc/default/incus << 'INCUS_ENV'
+  sudo tee -a /etc/default/incus > /dev/null << 'INCUS_ENV'
 # Setup for incus w/ OCI container support
 XDG_RUNTIME_DIR=/home/incus/.config
 TMPDIR=/home/incus/tmp
@@ -120,7 +120,7 @@ fi
 # After ZFS setup, /home/incus will be on the persistent disk storage pool
 sudo -u incus mkdir -p /home/incus/tmp
 
-incus remote add gcr https://us-central1-docker.pkg.dev
+sudo -u incus incus remote add gcr https://us-central1-docker.pkg.dev
 # incus launch gcr:PROJECT-ID/REPOSITORY/IMAGE
 
 # Setup DNS for incus
