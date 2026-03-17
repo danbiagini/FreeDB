@@ -43,13 +43,13 @@ My first experience with a serverless budget issue was hosting a [streamlit](htt
 # Usage 
 
 ## To Deploy / Provision
-1. terraform plan -var-file=values.tfvars
-1. terraform apply -var-file=values.tfvars
+1. terraform plan -var-file=values.tfvars (from infra/)
+1. terraform apply -var-file=values.tfvars (from infra/)
 2. ssh to the FreeDB host (see below for connection instructions), and git pull this repo
-3. setup incus using scripts/incus.sh (will need some manual intervention for the zfs install)
-4. setup traefik using scripts/traefik-instance.sh
-5. setup db using scripts/db-instance.sh
-6. ssh to cvat host, git pull this repo and run scripts/cvat-instance.sh  (you'll need to set the env variables)
+3. setup incus using platform/scripts/incus.sh (will need some manual intervention for the zfs install)
+4. setup traefik using platform/scripts/traefik-instance.sh
+5. setup db using platform/scripts/db-instance.sh
+6. ssh to cvat host, git pull this repo and run apps/cvat/cvat-instance.sh  (you'll need to set the env variables)
 
 ### ssh From cloud shell
 gcloud compute ssh --zone "us-central1-a" "freedb" --tunnel-through-iap

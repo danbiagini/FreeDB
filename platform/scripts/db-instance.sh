@@ -45,4 +45,4 @@ sudo -u incus incus exec db1 -- sh -c "curl https://packages.cloud.google.com/ap
 sudo -u incus incus exec db1 -- sh -c "echo 'deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main' | sudo tee -a /etc/apt/sources.list.d/google-cloud-sdk.list"
 sudo -u incus incus exec db1 -- sh -c "apt-get update && apt-get install -yq google-cloud-cli"
 
-sudo -u incus incus exec db1 -- sudo -u postgres crontab /var/lib/postgresql/tools/FreeDB/scripts/db1.cron
+sudo -u incus incus exec db1 -- sudo -u postgres crontab /var/lib/postgresql/tools/FreeDB/ops/db1.cron

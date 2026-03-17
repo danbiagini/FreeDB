@@ -63,11 +63,11 @@ incus remote add gcr https://us-central1-docker.pkg.dev
 # incus launch gcr:PROJECT-ID/REPOSITORY/IMAGE
 
 # Setup DNS for incus
-sudo cp config/incus-dns.service /etc/systemd/system/incus-dns-incusbr0.service
+sudo cp platform/config/incus-dns.service /etc/systemd/system/incus-dns-incusbr0.service
 sudo systemctl enable incus-dns-incusbr0.service
 sudo systemctl start incus-dns-incusbr0.service
 
 # Setup incus deploy container helper script
 sudo -u incus mkdir ~/deploy
-sudo -u incus cp scripts/deploy-container.sh ~/deploy/
+sudo -u incus cp apps/deploy-container.sh ~/deploy/
 sudo -u incus chmod +x ~/deploy/deploy-container.sh
