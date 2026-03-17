@@ -77,20 +77,28 @@ git clone https://github.com/danbiagini/FreeDB.git
 cd FreeDB
 git checkout v0.2
 ```
-3. setup incus (will need some manual intervention for the zfs install):
+3. setup incus (phase 1 — packages, user, registry auth):
 ```bash
 ./platform/scripts/incus.sh
 ```
-This auto-generates a service account key from the instance metadata. You can also pass a key file explicitly: `./platform/scripts/incus.sh /path/to/key.json`
-4. setup traefik:
+4. install ZFS and initialize incus (interactive — has license prompt):
+```bash
+sudo apt install linux-headers-cloud-amd64 zfsutils-linux zfs-dkms zfs-zed
+sudo incus admin init --preseed < platform/config/incus.yaml
+```
+5. finish incus setup (phase 2 — remote registry, DNS, deploy helper):
+```bash
+./platform/scripts/incus-post-init.sh
+```
+6. setup traefik:
 ```bash
 ./platform/scripts/traefik-instance.sh
 ```
-5. setup db:
+7. setup db:
 ```bash
 ./platform/scripts/db-instance.sh
 ```
-6. deploy apps using the TUI or app-specific scripts in `apps/`
+8. deploy apps using the TUI or app-specific scripts in `apps/`
 
 
 ### To connect to traefik dashboard using cloud shell tunnel

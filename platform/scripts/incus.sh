@@ -5,6 +5,10 @@ set -euo pipefail
 # If not provided, uses the instance's access token from the metadata server
 KEY_FILE="${1:-}"
 
+# ============================================================================
+# Phase 1: Install packages and configure user
+# ============================================================================
+
 # needed for zabbly package install (a more recent version for debian 12).
 # https://github.com/zabbly/incus
 sudo curl -fsSL https://pkgs.zabbly.com/key.asc -o /etc/apt/keyrings/zabbly.asc
@@ -23,7 +27,7 @@ sudo apt-get update; sudo apt-get install -yq incus
 sudo apt-get install -yq postgresql-client-15
 
 sudo sed -r -i'.BAK' 's/^Components(.*)$/Components\1 contrib/g' /etc/apt/sources.list.d/debian.sources
-# sudo apt install zfsutils-linux
+
 if ! id incus &>/dev/null; then
   sudo adduser --system --shell /bin/bash --home /home/incus incus
 else
@@ -34,20 +38,6 @@ sudo chown incus:incus /home/incus
 sudo usermod -aG incus-admin incus
 sudo usermod -aG sudo incus
 sudo -u incus cp /etc/skel/.* /home/incus/ 2>/dev/null || true
-
-# this command must be interactive because the zfs install has a license warning
-# apt install linux-headers-cloud-amd64 zfsutils-linux zfs-dkms zfs-zed
-#incus admin init
-
-# https://openzfs.github.io/openzfs-docs/Getting%20Started/Debian/
-# https://blog.simos.info/how-to-install-and-set-up-incus-on-a-cloud-server/
-# https://www.cyberciti.biz/faq/installing-zfs-on-debian-12-bookworm-linux-apt-get/
-
-# TODO: need to determine the correct device for the disk
-
-#incus storage create pd-standard zfs source=/dev/sdb
-#incus profile copy default v1
-#incus profile edit v1 # switch to the new storage pool
 
 # Setup artifact registry auth for incus/skopeo
 sudo -u incus mkdir -p /home/incus/.config/containers
@@ -103,9 +93,6 @@ HELPER
 fi
 
 echo "Setting incus environment variables for OCI container support"
-# Custom environment for freeDB w/ OCI container support
-# XDG_RUNTIME_DIR is needed for skopeo auth
-# TMPDIR points OCI image staging to the persistent disk to avoid filling the boot disk
 if ! grep -q "XDG_RUNTIME_DIR" /etc/default/incus 2>/dev/null; then
   sudo tee -a /etc/default/incus > /dev/null << 'INCUS_ENV'
 # Setup for incus w/ OCI container support
@@ -116,19 +103,34 @@ else
   echo "Incus environment already configured in /etc/default/incus, skipping"
 fi
 
-# Create the tmp directory on a path that won't fill the boot disk
-# After ZFS setup, /home/incus will be on the persistent disk storage pool
 sudo -u incus mkdir -p /home/incus/tmp
 
-sudo -u incus incus remote add gcr https://us-central1-docker.pkg.dev
-# incus launch gcr:PROJECT-ID/REPOSITORY/IMAGE
+# ============================================================================
+# Phase 2: Manual ZFS and incus init
+# ============================================================================
+# The ZFS install requires interactive confirmation (license prompt).
+# Run these commands manually, then proceed to Phase 3.
+#
+#   sudo apt install linux-headers-cloud-amd64 zfsutils-linux zfs-dkms zfs-zed
+#   sudo incus admin init --preseed < platform/config/incus.yaml
+#
+# References:
+#   https://openzfs.github.io/openzfs-docs/Getting%20Started/Debian/
+#   https://blog.simos.info/how-to-install-and-set-up-incus-on-a-cloud-server/
+#   https://www.cyberciti.biz/faq/installing-zfs-on-debian-12-bookworm-linux-apt-get/
+#
+# After ZFS/init is done, run:
+#   ./platform/scripts/incus-post-init.sh
+# ============================================================================
 
-# Setup DNS for incus
-sudo cp platform/config/incus-dns.service /etc/systemd/system/incus-dns-incusbr0.service
-sudo systemctl enable incus-dns-incusbr0.service
-sudo systemctl start incus-dns-incusbr0.service
-
-# Setup incus deploy container helper script
-sudo -u incus mkdir ~/deploy
-sudo -u incus cp apps/deploy-container.sh ~/deploy/
-sudo -u incus chmod +x ~/deploy/deploy-container.sh
+echo ""
+echo "================================================================"
+echo "Phase 1 complete."
+echo ""
+echo "Next, install ZFS and initialize incus manually:"
+echo "  sudo apt install linux-headers-cloud-amd64 zfsutils-linux zfs-dkms zfs-zed"
+echo "  sudo incus admin init --preseed < platform/config/incus.yaml"
+echo ""
+echo "Then run Phase 2:"
+echo "  ./platform/scripts/incus-post-init.sh"
+echo "================================================================"
