@@ -63,14 +63,23 @@ EOF
 
 # Note: ~/key.json can be removed after setup if no longer needed
 
-echo "Setting incus environment variable for use by skopeo"
+echo "Setting incus environment variables for OCI container support"
 # Custom environment for freeDB w/ OCI container support
+# XDG_RUNTIME_DIR is needed for skopeo auth
+# TMPDIR points OCI image staging to the persistent disk to avoid filling the boot disk
 if ! grep -q "XDG_RUNTIME_DIR" /etc/default/incus 2>/dev/null; then
-  echo "# Setup for incus w/ OCI container support" >> /etc/default/incus
-  echo "XDG_RUNTIME_DIR=/home/incus/.config" >> /etc/default/incus
+  cat >> /etc/default/incus << 'INCUS_ENV'
+# Setup for incus w/ OCI container support
+XDG_RUNTIME_DIR=/home/incus/.config
+TMPDIR=/home/incus/tmp
+INCUS_ENV
 else
-  echo "XDG_RUNTIME_DIR already configured in /etc/default/incus, skipping"
+  echo "Incus environment already configured in /etc/default/incus, skipping"
 fi
+
+# Create the tmp directory on a path that won't fill the boot disk
+# After ZFS setup, /home/incus will be on the persistent disk storage pool
+sudo -u incus mkdir -p /home/incus/tmp
 
 incus remote add gcr https://us-central1-docker.pkg.dev
 # incus launch gcr:PROJECT-ID/REPOSITORY/IMAGE
