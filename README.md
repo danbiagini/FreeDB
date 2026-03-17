@@ -9,16 +9,17 @@ I have been doing side / hobby software and tech projects for years, and often c
 The other issue is that hobby / side projects are often left dormant for weeks or months, and when provisioned with ClickOps there is no documentation as to what the infrastructure is, how its setup, how to change it, etc.  This can be costly in time; which could be better spent working on the project itself.
 
 # Solution 
-FreeDB provisions the following GCP resources using tofu:
-1. Two GCP Compute Instances (FreeDB and cvat)
-2. A backend subnet for inter instance communication (database, HTTP via proxy)
-3. Two external IP addresses (one for HTTPs proxy, the other for outbound internet traffic from cvat)
-4. A GCP Cloud Storage bucket for CVAT
-5. Two external "google_compute_disk" storage disks (one "standard" for FreeDB, a "balanced" for cvat)
-6. A set of FW rules allowing:
+FreeDB provisions the following GCP platform resources using tofu:
+1. A GCP Compute Instance (FreeDB host) with attached persistent disk
+2. A backend subnet for internal communication (database, HTTP via proxy)
+3. A static external IP address for HTTPS proxy
+4. A GCP Cloud Storage bucket for backups
+5. A set of FW rules allowing:
  - external HTTPS traffic to FreeDB
  - GCP sourced postgres connections to FreeDB
  - IAP Tunneled traffic to port 8080 on FreeDB
+
+Apps are deployed via the TUI as either Incus containers on the host or dedicated GCP VMs for heavier workloads (e.g. ML with GPU).
 
 
 ## FreeDB App Hosting Strategy
@@ -67,10 +68,10 @@ See `test.tfvars.example` for required variables.
 
 ### Steps after tofu apply
 1. ssh to the FreeDB host (see below for connection instructions), and git pull this repo
-3. setup incus using platform/scripts/incus.sh (will need some manual intervention for the zfs install)
-4. setup traefik using platform/scripts/traefik-instance.sh
-5. setup db using platform/scripts/db-instance.sh
-6. ssh to cvat host, git pull this repo and run apps/cvat/cvat-instance.sh  (you'll need to set the env variables)
+2. setup incus using platform/scripts/incus.sh (will need some manual intervention for the zfs install)
+3. setup traefik using platform/scripts/traefik-instance.sh
+4. setup db using platform/scripts/db-instance.sh
+5. deploy apps using the TUI or app-specific scripts in apps/
 
 ### ssh From cloud shell
 gcloud compute ssh --zone "us-central1-a" "freedb" --tunnel-through-iap

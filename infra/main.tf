@@ -1,7 +1,12 @@
 # variables
+variable "project" {
+  type        = string
+  description = "GCP project ID"
+}
+
 variable "service_account_id" {
  type        = string
- description = "Service account for the EC2 instance"
+ description = "Service account for the compute instances"
 }
 
 variable "env" {
@@ -18,6 +23,12 @@ variable "subnet_cidr" {
 
 locals {
   prefix = var.env != "" ? "${var.env}-" : ""
+}
+
+provider "google" {
+  project = var.project
+  region  = "us-central1"
+  zone    = "us-central1-a"
 }
 
 resource "google_compute_subnetwork" "default" {
@@ -109,13 +120,6 @@ resource "google_compute_disk" "data" {
   size = "50"
 }
 
-resource "google_compute_disk" "cvat-data" {
-  name = "${local.prefix}cvat-data-1"
-  type = "pd-balanced"
-  zone = "us-central1-a"
-  size = "50"
-}
-
 data "google_service_account" "default" {
   account_id = var.service_account_id
 }
@@ -158,38 +162,6 @@ resource "google_compute_instance" "default" {
   }
 }
 
-resource "google_compute_instance" "freedb-cvat" {
-  name         = "${local.prefix}cvat"
-  machine_type = "n2-standard-2"
-  zone         = "us-central1-a"
-  tags         = ["${local.prefix}ssh"]
-  allow_stopping_for_update = true
-
-  boot_disk {
-    initialize_params {
-      image = "ubuntu-os-cloud/ubuntu-2404-lts-amd64"
-    }
-  }
-
-  attached_disk {
-    source = google_compute_disk.cvat-data.id
-    device_name = google_compute_disk.cvat-data.name
-  }
-
-  network_interface {
-    subnetwork = google_compute_subnetwork.default.id
-    access_config {
-      # Include this section to give the VM an external IP address
-      network_tier = "STANDARD"
-    }
-  }
-
-  service_account {
-    scopes = ["cloud-platform"]
-    email = data.google_service_account.default.email
-  }
-}
-
 resource "google_storage_bucket" "static" {
   name          = "${local.prefix}freedb-backup"
   location      = "us-central1"
@@ -206,27 +178,6 @@ resource "google_storage_bucket" "static" {
     }
   }
 }
-
-# State bucket — must be created before `terraform init` (see bootstrap instructions)
-resource "google_storage_bucket" "tf-state" {
-  name          = "freedb-tf-state"
-  location      = "us-central1"
-  storage_class = "STANDARD"
-
-  uniform_bucket_level_access = true
-  versioning {
-    enabled = true
-  }
-  lifecycle_rule {
-    action {
-      type = "Delete"
-    }
-    condition {
-      num_newer_versions = 5
-    }
-  }
-}
-
 output "freedb_external_ip" {
   value = google_compute_address.static-ip.address
 }
