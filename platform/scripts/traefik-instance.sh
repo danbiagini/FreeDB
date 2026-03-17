@@ -35,15 +35,12 @@ sudo incus exec proxy1 -- sudo chown root:root /usr/local/bin/traefik
 sudo incus exec proxy1 -- sudo chmod 755 /usr/local/bin/traefik
 sudo incus exec proxy1 -- sudo setcap 'cap_net_bind_service=+ep' /usr/local/bin/traefik
 
-sudo incus exec proxy1 -- sudo mkdir /etc/traefik
-sudo incus exec proxy1 -- sudo mkdir /etc/traefik/acme
-sudo incus exec proxy1 -- sudo mkdir /etc/traefik/manual
-sudo incus exec proxy1 -- sudo mkdir /etc/gcp-credentials
-
+sudo incus exec proxy1 -- sudo mkdir -p /etc/traefik/acme /etc/traefik/manual /etc/traefik/plugins-storage /etc/gcp-credentials
 
 sudo incus exec proxy1 -- sudo chown -R root:root /etc/traefik
 sudo incus exec proxy1 -- sudo chown -R traefik:traefik /etc/traefik/acme
 sudo incus exec proxy1 -- sudo chown -R traefik:traefik /etc/traefik/manual
+sudo incus exec proxy1 -- sudo chown -R traefik:traefik /etc/traefik/plugins-storage
 
 sudo incus file push  "$TRAEFIK_CONFIG_PATH" proxy1/etc/traefik/
 
