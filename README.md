@@ -67,14 +67,20 @@ tofu apply -var-file=test.tfvars
 See `test.tfvars.example` for required variables.
 
 ### Steps after tofu apply
-1. ssh to the FreeDB host (see below for connection instructions), and git pull this repo
-2. setup incus using platform/scripts/incus.sh (will need some manual intervention for the zfs install)
-3. setup traefik using platform/scripts/traefik-instance.sh
-4. setup db using platform/scripts/db-instance.sh
-5. deploy apps using the TUI or app-specific scripts in apps/
-
-### ssh From cloud shell
+1. ssh to the FreeDB host:
+```bash
 gcloud compute ssh --zone "us-central1-a" "freedb" --tunnel-through-iap
+```
+2. clone the repo and checkout the latest release:
+```bash
+git clone https://github.com/danbiagini/FreeDB.git
+cd FreeDB
+git checkout v0.2
+```
+3. setup incus using platform/scripts/incus.sh (will need some manual intervention for the zfs install)
+4. setup traefik using platform/scripts/traefik-instance.sh
+5. setup db using platform/scripts/db-instance.sh
+6. deploy apps using the TUI or app-specific scripts in apps/
 
 
 ### To connect to traefik dashboard using cloud shell tunnel
