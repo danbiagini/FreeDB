@@ -5,11 +5,13 @@ set -euo pipefail
 # If not provided, uses the instance's access token from the metadata server
 KEY_FILE="${1:-}"
 
+SCRIPT_DIR=$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+
 # ============================================================================
-# Phase 1: Install packages and configure user
+# Install packages
 # ============================================================================
 
-# needed for zabbly package install (a more recent version for debian 12).
+# Zabbly package repo (more recent incus version for debian 12)
 # https://github.com/zabbly/incus
 sudo curl -fsSL https://pkgs.zabbly.com/key.asc -o /etc/apt/keyrings/zabbly.asc
 sudo sh -c 'cat <<EOF > /etc/apt/sources.list.d/zabbly-incus-stable.sources
@@ -23,10 +25,19 @@ Signed-By: /etc/apt/keyrings/zabbly.asc
 
 EOF'
 
-sudo apt-get update; sudo apt-get install -yq incus
-sudo apt-get install -yq postgresql-client-15
-
+# Add contrib component for ZFS packages
 sudo sed -r -i'.BAK' 's/^Components(.*)$/Components\1 contrib/g' /etc/apt/sources.list.d/debian.sources
+
+sudo apt-get update
+sudo apt-get install -yq incus postgresql-client-15
+
+# Install ZFS non-interactively (pre-accept the license prompt)
+echo "zfs-dkms zfs-dkms/note-incompatible-licenses note true" | sudo debconf-set-selections
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -yq linux-headers-cloud-amd64 zfsutils-linux zfs-dkms zfs-zed
+
+# ============================================================================
+# Configure incus user
+# ============================================================================
 
 if ! id incus &>/dev/null; then
   sudo adduser --system --shell /bin/bash --home /home/incus incus
@@ -39,11 +50,13 @@ sudo usermod -aG incus-admin incus
 sudo usermod -aG sudo incus
 sudo -u incus cp /etc/skel/.* /home/incus/ 2>/dev/null || true
 
+# ============================================================================
 # Setup artifact registry auth for incus/skopeo
+# ============================================================================
+
 sudo -u incus mkdir -p /home/incus/.config/containers
 
 if [ -n "$KEY_FILE" ] && [ -f "$KEY_FILE" ]; then
-  # Use static service account key
   echo "Using service account key from $KEY_FILE"
   AUTH_STRING=$(echo -n "_json_key:$(cat "$KEY_FILE")" | base64 -w0)
   sudo -u incus tee /home/incus/.config/containers/auth.json > /dev/null << EOF
@@ -56,7 +69,6 @@ if [ -n "$KEY_FILE" ] && [ -f "$KEY_FILE" ]; then
 }
 EOF
 else
-  # Use a credential helper that fetches a fresh token from the metadata server
   echo "No key file provided, setting up credential helper using instance metadata token"
 
   sudo tee /usr/local/bin/gcp-registry-auth.sh > /dev/null << 'HELPER'
@@ -79,18 +91,21 @@ AUTHEOF
 HELPER
   sudo chmod +x /usr/local/bin/gcp-registry-auth.sh
 
-  # Generate initial auth.json and set up a cron to refresh it (token expires every hour)
   sudo -u incus /usr/local/bin/gcp-registry-auth.sh > /tmp/auth.json
   sudo -u incus cp /tmp/auth.json /home/incus/.config/containers/auth.json
   rm -f /tmp/auth.json
 
-  # Refresh the token every 45 minutes
+  # Refresh the token every 45 minutes (expires every hour)
   CRON_LINE="*/45 * * * * /usr/local/bin/gcp-registry-auth.sh > /home/incus/.config/containers/auth.json"
   EXISTING=$(sudo -u incus crontab -l 2>/dev/null | grep -v gcp-registry-auth || true)
   echo "${EXISTING:+$EXISTING
 }${CRON_LINE}" | sudo -u incus crontab -
   echo "Credential helper installed with 45-minute token refresh cron"
 fi
+
+# ============================================================================
+# Configure incus environment and initialize
+# ============================================================================
 
 echo "Setting incus environment variables for OCI container support"
 if ! grep -q "XDG_RUNTIME_DIR" /etc/default/incus 2>/dev/null; then
@@ -105,32 +120,37 @@ fi
 
 sudo -u incus mkdir -p /home/incus/tmp
 
+# Initialize incus with preseed config
+echo "Initializing incus with preseed config..."
+sudo incus admin init --preseed < "${SCRIPT_DIR}/../config/incus.yaml"
+
 # ============================================================================
-# Phase 2: Manual ZFS and incus init
+# Post-init: registry remote, DNS, deploy helper
 # ============================================================================
-# The ZFS install requires interactive confirmation (license prompt).
-# Run these commands manually, then proceed to Phase 3.
-#
-#   sudo apt install linux-headers-cloud-amd64 zfsutils-linux zfs-dkms zfs-zed
-#   sudo incus admin init --preseed < platform/config/incus.yaml
-#
-# References:
-#   https://openzfs.github.io/openzfs-docs/Getting%20Started/Debian/
-#   https://blog.simos.info/how-to-install-and-set-up-incus-on-a-cloud-server/
-#   https://www.cyberciti.biz/faq/installing-zfs-on-debian-12-bookworm-linux-apt-get/
-#
-# After ZFS/init is done, run:
-#   ./platform/scripts/incus-post-init.sh
-# ============================================================================
+
+# Add artifact registry remote
+if sudo incus remote list | grep -q gcr; then
+  echo "Remote 'gcr' already exists, skipping"
+else
+  sudo incus remote add gcr https://us-central1-docker.pkg.dev --protocol=oci
+fi
+
+# Setup DNS for incus containers
+sudo cp "${SCRIPT_DIR}/../config/incus-dns.service" /etc/systemd/system/incus-dns-incusbr0.service
+sudo systemctl daemon-reload
+sudo systemctl enable incus-dns-incusbr0.service
+sudo systemctl start incus-dns-incusbr0.service
+
+# Setup deploy helper
+sudo -u incus mkdir -p /home/incus/deploy
+sudo -u incus cp "${SCRIPT_DIR}/../../apps/deploy-container.sh" /home/incus/deploy/
+sudo -u incus chmod +x /home/incus/deploy/deploy-container.sh
 
 echo ""
 echo "================================================================"
-echo "Phase 1 complete."
+echo "Incus setup complete!"
 echo ""
-echo "Next, install ZFS and initialize incus manually:"
-echo "  sudo apt install linux-headers-cloud-amd64 zfsutils-linux zfs-dkms zfs-zed"
-echo "  sudo incus admin init --preseed < platform/config/incus.yaml"
-echo ""
-echo "Then run Phase 2:"
-echo "  ./platform/scripts/incus-post-init.sh"
+echo "Next steps:"
+echo "  ./platform/scripts/traefik-instance.sh"
+echo "  ./platform/scripts/db-instance.sh"
 echo "================================================================"
