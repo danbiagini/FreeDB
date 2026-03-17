@@ -6,6 +6,9 @@ SCRIPT_DIR=$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 REPO_ROOT="${SCRIPT_DIR}/../.."
 
 sudo incus launch images:debian/12/cloud db1
+
+# Force apt to use IPv4 (IPv6 is disabled on the incus bridge but containers may still try it)
+sudo incus exec db1 -- sh -c 'echo "Acquire::ForceIPv4 \"true\";" > /etc/apt/apt.conf.d/99force-ipv4'
 sudo incus exec db1 -- apt update
 sudo incus exec db1 -- apt install -yq postgresql curl cron
 
