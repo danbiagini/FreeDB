@@ -96,7 +96,9 @@ HELPER
 
   # Refresh the token every 45 minutes
   CRON_LINE="*/45 * * * * /usr/local/bin/gcp-registry-auth.sh > /home/incus/.config/containers/auth.json"
-  (sudo -u incus crontab -l 2>/dev/null | grep -v gcp-registry-auth; echo "$CRON_LINE") | sudo -u incus crontab -
+  EXISTING=$(sudo -u incus crontab -l 2>/dev/null | grep -v gcp-registry-auth || true)
+  echo "${EXISTING:+$EXISTING
+}${CRON_LINE}" | sudo -u incus crontab -
   echo "Credential helper installed with 45-minute token refresh cron"
 fi
 
