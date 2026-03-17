@@ -71,25 +71,15 @@ See `test.tfvars.example` for required variables.
 ```bash
 gcloud compute ssh --zone "us-central1-a" "freedb" --tunnel-through-iap
 ```
-2. clone the repo and checkout the latest release:
+2. run the installer:
 ```bash
-git clone https://github.com/danbiagini/FreeDB.git
-cd FreeDB
-git checkout v0.2
+curl -fsSL https://raw.githubusercontent.com/danbiagini/FreeDB/main/install.sh | bash
 ```
-3. setup incus (installs ZFS, initializes incus, configures registry auth and DNS):
+To install a specific branch or tag:
 ```bash
-./platform/scripts/incus.sh
+FREEDB_BRANCH=v0.2 curl -fsSL https://raw.githubusercontent.com/danbiagini/FreeDB/main/install.sh | bash
 ```
-4. setup traefik:
-```bash
-./platform/scripts/traefik-instance.sh
-```
-5. setup db:
-```bash
-./platform/scripts/db-instance.sh
-```
-6. deploy apps using the TUI or app-specific scripts in `apps/`
+3. deploy apps using the TUI or app-specific scripts in `apps/`
 
 
 ### To connect to traefik dashboard using cloud shell tunnel

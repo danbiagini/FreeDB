@@ -120,9 +120,21 @@ fi
 
 sudo -u incus mkdir -p /home/incus/tmp
 
-# Initialize incus with preseed config
+# Auto-detect the attached persistent disk (non-boot disk)
+echo "Detecting attached persistent disk..."
+BOOT_DISK=$(readlink -f /dev/disk/by-id/google-persistent-disk-0 2>/dev/null || echo "")
+ATTACHED_DISK=$(ls /dev/disk/by-id/google-* 2>/dev/null | grep -v 'part' | grep -v 'persistent-disk-0' | head -1 || true)
+
+if [ -z "$ATTACHED_DISK" ]; then
+  echo "Error: No attached persistent disk found. Expected a non-boot disk in /dev/disk/by-id/google-*"
+  exit 1
+fi
+echo "Found attached disk: $ATTACHED_DISK"
+
+# Generate preseed config with the detected disk
 echo "Initializing incus with preseed config..."
-sudo incus admin init --preseed < "${SCRIPT_DIR}/../config/incus.yaml"
+sed "s|/dev/disk/by-id/google-freedb-data-1|${ATTACHED_DISK}|g" \
+  "${SCRIPT_DIR}/../config/incus.yaml" | sudo incus admin init --preseed
 
 # ============================================================================
 # Post-init: registry remote, DNS, deploy helper
