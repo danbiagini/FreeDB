@@ -42,10 +42,31 @@ My first experience with a serverless budget issue was hosting a [streamlit](htt
 
 # Usage 
 
+## First-time Bootstrap (state bucket)
+The Terraform state is stored in a GCS bucket. On first setup, create it before `terraform init`:
+```bash
+cd infra
+gcloud storage buckets create gs://freedb-tf-state --location=us-central1 --uniform-bucket-level-access
+terraform init
+```
+
 ## To Deploy / Provision
-1. terraform plan -var-file=values.tfvars (from infra/)
-1. terraform apply -var-file=values.tfvars (from infra/)
-2. ssh to the FreeDB host (see below for connection instructions), and git pull this repo
+```bash
+cd infra
+terraform plan -var-file=values.tfvars
+terraform apply -var-file=values.tfvars
+```
+
+### Creating a test environment
+```bash
+cd infra
+terraform workspace new test
+terraform apply -var-file=test.tfvars
+```
+See `test.tfvars.example` for required variables.
+
+### Steps after terraform apply
+1. ssh to the FreeDB host (see below for connection instructions), and git pull this repo
 3. setup incus using platform/scripts/incus.sh (will need some manual intervention for the zfs install)
 4. setup traefik using platform/scripts/traefik-instance.sh
 5. setup db using platform/scripts/db-instance.sh

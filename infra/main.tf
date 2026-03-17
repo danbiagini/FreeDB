@@ -207,6 +207,26 @@ resource "google_storage_bucket" "static" {
   }
 }
 
+# State bucket — must be created before `terraform init` (see bootstrap instructions)
+resource "google_storage_bucket" "tf-state" {
+  name          = "freedb-tf-state"
+  location      = "us-central1"
+  storage_class = "STANDARD"
+
+  uniform_bucket_level_access = true
+  versioning {
+    enabled = true
+  }
+  lifecycle_rule {
+    action {
+      type = "Delete"
+    }
+    condition {
+      num_newer_versions = 5
+    }
+  }
+}
+
 output "freedb_external_ip" {
   value = google_compute_address.static-ip.address
 }
