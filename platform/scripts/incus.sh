@@ -1,6 +1,13 @@
 #!/bin/bash
 set -euo pipefail
 
+KEY_FILE="${1:-$HOME/key.json}"
+if [ ! -f "$KEY_FILE" ]; then
+  echo "Usage: sudo $0 [/path/to/key.json]"
+  echo "Error: Service account key not found at $KEY_FILE"
+  exit 1
+fi
+
 # needed for zabbly package install (a more recent version for debian 12).
 # https://github.com/zabbly/incus
 sudo curl -fsSL https://pkgs.zabbly.com/key.asc -o /etc/apt/keyrings/zabbly.asc
@@ -25,6 +32,8 @@ if ! id incus &>/dev/null; then
 else
   echo "User 'incus' already exists, skipping creation"
 fi
+sudo mkdir -p /home/incus
+sudo chown incus:incus /home/incus
 sudo usermod -aG incus-admin incus
 sudo usermod -aG sudo incus
 sudo -u incus cp /etc/skel/.* /home/incus/ 2>/dev/null || true
@@ -47,7 +56,7 @@ sudo -u incus cp /etc/skel/.* /home/incus/ 2>/dev/null || true
 
 
 # First, let's create a temporary variable with the base64 encoded credentials
-AUTH_STRING=$(echo -n "_json_key:$(cat ~/key.json)" | base64 -w0)
+AUTH_STRING=$(echo -n "_json_key:$(cat "$KEY_FILE")" | base64 -w0)
 
 # Now create the auth.json file
 sudo -u incus mkdir -p /home/incus/.config/containers

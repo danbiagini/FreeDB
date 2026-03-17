@@ -79,7 +79,7 @@ git checkout v0.2
 ```
 3. setup incus (will need some manual intervention for the zfs install):
 ```bash
-./platform/scripts/incus.sh
+./platform/scripts/incus.sh /path/to/key.json
 ```
 4. setup traefik:
 ```bash
