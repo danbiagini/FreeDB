@@ -1,22 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 
-# Get or generate a service account key for artifact registry auth
+# Optional: provide a service account key file for artifact registry auth
+# If not provided, uses the instance's access token from the metadata server
 KEY_FILE="${1:-}"
-if [ -z "$KEY_FILE" ]; then
-  KEY_FILE="/tmp/freedb-sa-key.json"
-  echo "No key file specified, generating one from instance service account..."
-  SA_EMAIL=$(curl -s -H "Metadata-Flavor: Google" \
-    http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/email)
-  gcloud iam service-accounts keys create "$KEY_FILE" --iam-account="$SA_EMAIL"
-  GENERATED_KEY=true
-fi
-
-if [ ! -f "$KEY_FILE" ]; then
-  echo "Error: Service account key not found at $KEY_FILE"
-  echo "Usage: $0 [/path/to/key.json]"
-  exit 1
-fi
 
 # needed for zabbly package install (a more recent version for debian 12).
 # https://github.com/zabbly/incus
@@ -62,15 +49,14 @@ sudo -u incus cp /etc/skel/.* /home/incus/ 2>/dev/null || true
 #incus profile copy default v1
 #incus profile edit v1 # switch to the new storage pool
 
-# TO setup incus to be able to launch containers from gcloud artifact registry
-
-
-# First, let's create a temporary variable with the base64 encoded credentials
-AUTH_STRING=$(echo -n "_json_key:$(cat "$KEY_FILE")" | base64 -w0)
-
-# Now create the auth.json file
+# Setup artifact registry auth for incus/skopeo
 sudo -u incus mkdir -p /home/incus/.config/containers
-sudo -u incus tee /home/incus/.config/containers/auth.json > /dev/null << EOF
+
+if [ -n "$KEY_FILE" ] && [ -f "$KEY_FILE" ]; then
+  # Use static service account key
+  echo "Using service account key from $KEY_FILE"
+  AUTH_STRING=$(echo -n "_json_key:$(cat "$KEY_FILE")" | base64 -w0)
+  sudo -u incus tee /home/incus/.config/containers/auth.json > /dev/null << EOF
 {
   "auths": {
     "us-central1-docker.pkg.dev": {
@@ -79,11 +65,39 @@ sudo -u incus tee /home/incus/.config/containers/auth.json > /dev/null << EOF
   }
 }
 EOF
+else
+  # Use a credential helper that fetches a fresh token from the metadata server
+  echo "No key file provided, setting up credential helper using instance metadata token"
 
-# Clean up generated key if we created it
-if [ "${GENERATED_KEY:-false}" = true ]; then
-  rm -f "$KEY_FILE"
-  echo "Cleaned up generated service account key"
+  sudo tee /usr/local/bin/gcp-registry-auth.sh > /dev/null << 'HELPER'
+#!/bin/bash
+# Credential helper for GCP Artifact Registry
+# Returns a fresh access token from the instance metadata server
+TOKEN=$(curl -s -H "Metadata-Flavor: Google" \
+  http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
+AUTH=$(echo -n "oauth2accesstoken:${TOKEN}" | base64 -w0)
+cat << AUTHEOF
+{
+  "auths": {
+    "us-central1-docker.pkg.dev": {
+      "auth": "${AUTH}"
+    }
+  }
+}
+AUTHEOF
+HELPER
+  sudo chmod +x /usr/local/bin/gcp-registry-auth.sh
+
+  # Generate initial auth.json and set up a cron to refresh it (token expires every hour)
+  sudo -u incus /usr/local/bin/gcp-registry-auth.sh > /tmp/auth.json
+  sudo -u incus cp /tmp/auth.json /home/incus/.config/containers/auth.json
+  rm -f /tmp/auth.json
+
+  # Refresh the token every 45 minutes
+  CRON_LINE="*/45 * * * * /usr/local/bin/gcp-registry-auth.sh > /home/incus/.config/containers/auth.json"
+  (sudo -u incus crontab -l 2>/dev/null | grep -v gcp-registry-auth; echo "$CRON_LINE") | sudo -u incus crontab -
+  echo "Credential helper installed with 45-minute token refresh cron"
 fi
 
 echo "Setting incus environment variables for OCI container support"
