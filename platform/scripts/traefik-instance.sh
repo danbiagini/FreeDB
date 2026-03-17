@@ -10,53 +10,59 @@ TRAEFIK_CONFIG_PATH="${CONFIG_DIR}/traefik.toml"
 
 TRAEFIK_VERSION="${TRAEFIK_VERSION:-3.1.7}"
 
-sudo -u incus incus launch images:debian/12/cloud proxy1
-sudo -u incus incus exec proxy1 -- apt update
-sudo -u incus incus exec proxy1 -- apt install -yq git curl
+sudo incus launch images:debian/12/cloud proxy1
+sudo incus exec proxy1 -- apt update
+sudo incus exec proxy1 -- apt install -yq git curl
 
-sudo -u incus incus exec proxy1 -- sudo adduser --system --group --shell /bin/bash --home /home/traefik traefik
-sudo -u incus incus exec proxy1 -- sudo usermod -aG sudo traefik
+sudo incus exec proxy1 -- sudo adduser --system --group --shell /bin/bash --home /home/traefik traefik
+sudo incus exec proxy1 -- sudo usermod -aG sudo traefik
 
 # setup the traefik user with bash and PATH after the gcloud install
-sudo -u incus incus exec proxy1 -- sudo -u traefik cp /etc/skel/.* /home/traefik/
+sudo incus exec proxy1 -- sudo -u traefik cp /etc/skel/.* /home/traefik/
 
 
 # check version of traefik
 echo "Installing traefik version ${TRAEFIK_VERSION} (override with TRAEFIK_VERSION env var)"
 echo "Check for updates at https://github.com/traefik/traefik/releases"
-sudo -u incus incus exec proxy1 -- sudo -u traefik -i sh -c "curl -L 'https://github.com/traefik/traefik/releases/download/v${TRAEFIK_VERSION}/traefik_v${TRAEFIK_VERSION}_linux_amd64.tar.gz' > traefik_v${TRAEFIK_VERSION}.tar.gz"
-sudo -u incus incus exec proxy1 -- sudo -u traefik -i tar -xzvf "traefik_v${TRAEFIK_VERSION}.tar.gz"
+sudo incus exec proxy1 -- sudo -u traefik -i sh -c "curl -L 'https://github.com/traefik/traefik/releases/download/v${TRAEFIK_VERSION}/traefik_v${TRAEFIK_VERSION}_linux_amd64.tar.gz' > traefik_v${TRAEFIK_VERSION}.tar.gz"
+sudo incus exec proxy1 -- sudo -u traefik -i tar -xzvf "traefik_v${TRAEFIK_VERSION}.tar.gz"
 
-sudo -u incus incus exec proxy1 -- sudo cp /home/traefik/traefik /usr/local/bin/
-sudo -u incus incus exec proxy1 -- sudo chown root:root /usr/local/bin/traefik
-sudo -u incus incus exec proxy1 -- sudo chmod 755 /usr/local/bin/traefik
-sudo -u incus incus exec proxy1 -- sudo setcap 'cap_net_bind_service=+ep' /usr/local/bin/traefik
+sudo incus exec proxy1 -- sudo cp /home/traefik/traefik /usr/local/bin/
+sudo incus exec proxy1 -- sudo chown root:root /usr/local/bin/traefik
+sudo incus exec proxy1 -- sudo chmod 755 /usr/local/bin/traefik
+sudo incus exec proxy1 -- sudo setcap 'cap_net_bind_service=+ep' /usr/local/bin/traefik
 
-sudo -u incus incus exec proxy1 -- sudo mkdir /etc/traefik
-sudo -u incus incus exec proxy1 -- sudo mkdir /etc/traefik/acme
-sudo -u incus incus exec proxy1 -- sudo mkdir /etc/traefik/manual
-sudo -u incus incus exec proxy1 -- sudo mkdir /etc/gcp-credentials
+sudo incus exec proxy1 -- sudo mkdir /etc/traefik
+sudo incus exec proxy1 -- sudo mkdir /etc/traefik/acme
+sudo incus exec proxy1 -- sudo mkdir /etc/traefik/manual
+sudo incus exec proxy1 -- sudo mkdir /etc/gcp-credentials
 
 
-sudo -u incus incus exec proxy1 -- sudo chown -R root:root /etc/traefik
-sudo -u incus incus exec proxy1 -- sudo chown -R traefik:traefik /etc/traefik/acme
-sudo -u incus incus exec proxy1 -- sudo chown -R traefik:traefik /etc/traefik/manual
+sudo incus exec proxy1 -- sudo chown -R root:root /etc/traefik
+sudo incus exec proxy1 -- sudo chown -R traefik:traefik /etc/traefik/acme
+sudo incus exec proxy1 -- sudo chown -R traefik:traefik /etc/traefik/manual
 
-sudo -u incus incus file push  "$TRAEFIK_CONFIG_PATH" proxy1/etc/traefik/
+sudo incus file push  "$TRAEFIK_CONFIG_PATH" proxy1/etc/traefik/
 
-sudo -u incus incus exec proxy1 -- sudo chown root:root /etc/traefik/traefik.toml
-sudo -u incus incus exec proxy1 -- sudo chmod 644 /etc/traefik/traefik.toml
+sudo incus exec proxy1 -- sudo chown root:root /etc/traefik/traefik.toml
+sudo incus exec proxy1 -- sudo chmod 644 /etc/traefik/traefik.toml
 
 echo "pushing ${CONFIG_DIR}/traefik.service to proxy1/etc/systemd/system/"
-sudo -u incus incus file push "${CONFIG_DIR}/traefik.service" proxy1/etc/systemd/system/
+sudo incus file push "${CONFIG_DIR}/traefik.service" proxy1/etc/systemd/system/
 
-sudo -u incus incus exec proxy1 -- sudo chown root:root /etc/systemd/system/traefik.service
-sudo -u incus incus exec proxy1 -- sudo chmod 644 /etc/systemd/system/traefik.service
-sudo -u incus incus exec proxy1 -- sudo systemctl daemon-reload
-sudo -u incus incus exec proxy1 -- sudo systemctl start traefik.service
+sudo incus exec proxy1 -- sudo chown root:root /etc/systemd/system/traefik.service
+sudo incus exec proxy1 -- sudo chmod 644 /etc/systemd/system/traefik.service
+sudo incus exec proxy1 -- sudo systemctl daemon-reload
+sudo incus exec proxy1 -- sudo systemctl start traefik.service
 
-sudo -u incus incus exec proxy1 -- sudo chmod 755 /etc/gcp-credentials
+sudo incus exec proxy1 -- sudo chmod 755 /etc/gcp-credentials
 # manually move the service_account.json file to that directory
 
-# this works since the proxy1 instance will have a DHCP ipv4 address for eth0 
-sudo -u incus incus network forward port add incusbr0 10.0.1.14 tcp 80,443,8080 $(sudo -u incus incus query '/1.0/instances/proxy1?recursion=1' | jq -r '.state.network.eth0.addresses[] | select(.family == "inet") | .address')
+# Auto-detect host internal IP and proxy container IP for network forwarding
+HOST_INTERNAL_IP=$(curl -s -H "Metadata-Flavor: Google" \
+  http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/ip)
+PROXY1_IP=$(sudo incus query '/1.0/instances/proxy1?recursion=1' | jq -r '.state.network.eth0.addresses[] | select(.family == "inet") | .address')
+
+echo "Setting up network forward: ${HOST_INTERNAL_IP} -> ${PROXY1_IP}:80,443,8080"
+sudo incus network forward create incusbr0 "${HOST_INTERNAL_IP}" || echo "Forward already exists, continuing"
+sudo incus network forward port add incusbr0 "${HOST_INTERNAL_IP}" tcp 80,443,8080 "${PROXY1_IP}"
