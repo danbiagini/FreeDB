@@ -32,9 +32,10 @@ var (
 )
 
 type refreshMsg struct {
-	rows       []table.Row
+	rows        []table.Row
 	cpuReadings map[string]float64
-	err        error
+	metrics     map[string]*traefik.ServiceMetrics
+	err         error
 }
 
 type Model struct {
@@ -46,6 +47,8 @@ type Model struct {
 	prevCPU     map[string]float64 // previous CPU seconds per container
 	prevTime    time.Time          // time of previous CPU reading
 	cpuPercent  map[string]float64 // computed CPU % per container
+	history     *traefik.MetricsHistory
+	curMetrics  map[string]*traefik.ServiceMetrics
 	err         error
 }
 
@@ -54,10 +57,11 @@ func NewModel(ic *incus.Client, reg *registry.AppRegistry, cfg *config.Config) M
 		{Title: "Name", Width: 16},
 		{Title: "Status", Width: 10},
 		{Title: "Image", Width: 20},
-		{Title: "Domain", Width: 24},
-		{Title: "IP", Width: 16},
-		{Title: "Mem", Width: 8},
-		{Title: "CPU", Width: 8},
+		{Title: "Domain", Width: 22},
+		{Title: "Mem", Width: 7},
+		{Title: "CPU", Width: 6},
+		{Title: "Today", Width: 8},
+		{Title: "7d avg", Width: 8},
 	}
 
 	t := table.New(
@@ -78,11 +82,15 @@ func NewModel(ic *incus.Client, reg *registry.AppRegistry, cfg *config.Config) M
 		Bold(false)
 	t.SetStyles(s)
 
+	histPath := "/etc/freedb/metrics-history.json"
+	history, _ := traefik.LoadHistory(histPath)
+
 	return Model{
 		table:       t,
 		incusClient: ic,
 		registry:    reg,
 		cfg:         cfg,
+		history:     history,
 	}
 }
 
@@ -115,6 +123,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.prevCPU = msg.cpuReadings
 			m.prevTime = now
+
+			// Update traffic metrics
+			if msg.metrics != nil {
+				m.curMetrics = msg.metrics
+				if m.history != nil {
+					if len(m.history.Baseline) == 0 {
+						m.history.UpdateBaseline(msg.metrics)
+					}
+					m.history.RecordSnapshot(msg.metrics)
+					_ = m.history.Save()
+				}
+			}
+
 			m.table.SetRows(msg.rows)
 		}
 		m.lastRefresh = now
@@ -156,6 +177,16 @@ func (m Model) View() string {
 	return b.String()
 }
 
+func formatReqs(n float64) string {
+	if n >= 1000000 {
+		return fmt.Sprintf("%.1fM", n/1000000)
+	}
+	if n >= 1000 {
+		return fmt.Sprintf("%.1fk", n/1000)
+	}
+	return fmt.Sprintf("%.0f", n)
+}
+
 func (m Model) SelectedApp() string {
 	row := m.table.SelectedRow()
 	if row == nil {
@@ -174,11 +205,15 @@ func (m Model) tick() tea.Cmd {
 
 func (m Model) refresh() tea.Cmd {
 	cpuPercent := m.cpuPercent
+	history := m.history
 	return func() tea.Msg {
 		containers, err := m.incusClient.ListContainers(context.Background())
 		if err != nil {
 			return refreshMsg{err: err}
 		}
+
+		// Fetch Traefik metrics (best effort — don't fail if unavailable)
+		metrics, _ := traefik.FetchMetrics(m.incusClient, m.cfg.ProxyContainer)
 
 		systemContainers := map[string]bool{
 			m.cfg.ProxyContainer: true,
@@ -229,15 +264,23 @@ func (m Model) refresh() tea.Cmd {
 				mem = fmt.Sprintf("%dMB", c.MemUsageMB)
 			}
 
-			ip := c.IP
-			if ip == "" {
-				ip = "—"
-			}
-
 			cpuReadings[c.Name] = c.CPUSeconds
 			cpu := "—"
 			if pct, ok := cpuPercent[c.Name]; ok && c.Status == "RUNNING" {
 				cpu = fmt.Sprintf("%.1f%%", pct)
+			}
+
+			today := "—"
+			avg7d := "—"
+			if metrics != nil && history != nil {
+				todayReqs := history.TodayRequests(c.Name, metrics)
+				if todayReqs > 0 {
+					today = formatReqs(todayReqs)
+				}
+				avgReqs := history.AvgDailyRequests(c.Name, 7)
+				if avgReqs > 0 {
+					avg7d = formatReqs(avgReqs)
+				}
 			}
 
 			rows = append(rows, table.Row{
@@ -245,12 +288,13 @@ func (m Model) refresh() tea.Cmd {
 				c.Status,
 				image,
 				domain,
-				ip,
 				mem,
 				cpu,
+				today,
+				avg7d,
 			})
 		}
 
-		return refreshMsg{rows: rows, cpuReadings: cpuReadings}
+		return refreshMsg{rows: rows, cpuReadings: cpuReadings, metrics: metrics}
 	}
 }
