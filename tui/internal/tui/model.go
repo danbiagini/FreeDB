@@ -79,7 +79,7 @@ func (m Model) updateDashboard(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if selected != "" {
 				app, _ := m.registry.Get(selected)
 				isSystem := selected == m.cfg.ProxyContainer || selected == m.cfg.DBContainer
-				mg := manage.NewModel(selected, app, isSystem, m.incus, m.registry)
+				mg := manage.NewModel(selected, app, isSystem, m.incus, m.registry, m.width, m.height)
 				m.manage = &mg
 				m.current = viewManageApp
 				return m, mg.Init()

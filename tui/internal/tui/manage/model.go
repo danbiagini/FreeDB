@@ -47,8 +47,14 @@ type Model struct {
 	busy        bool
 }
 
-func NewModel(appName string, app *registry.App, isSystem bool, ic *incus.Client, reg *registry.AppRegistry) Model {
-	vp := viewport.New(80, 20)
+func NewModel(appName string, app *registry.App, isSystem bool, ic *incus.Client, reg *registry.AppRegistry, width, height int) Model {
+	if width < 40 {
+		width = 120
+	}
+	if height < 10 {
+		height = 30
+	}
+	vp := viewport.New(width-4, height-6)
 
 	return Model{
 		appName:     appName,
