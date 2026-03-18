@@ -208,40 +208,33 @@ func (c *Client) LaunchOCI(ctx context.Context, name, imageRef string) error {
 	// Strip docker.io/ prefix — use the "docker" remote instead
 	alias = strings.TrimPrefix(alias, "docker.io/")
 
-	// Load incus client config to access configured remotes
+	// Load incus client config to get remote server address
 	conf, err := cliconfig.LoadConfig("")
 	if err != nil {
 		return fmt.Errorf("loading incus config: %w", err)
 	}
 
-	// Connect to the OCI remote image server
-	imgServer, err := conf.GetImageServer(remote)
-	if err != nil {
-		return fmt.Errorf("connecting to remote %q: %w", remote, err)
+	remoteConfig, ok := conf.Remotes[remote]
+	if !ok {
+		return fmt.Errorf("remote %q not found in incus config", remote)
 	}
 
-	// Resolve the image alias
-	imgAlias, _, err := imgServer.GetImageAlias(alias)
-	if err != nil {
-		return fmt.Errorf("resolving image %q on remote %q: %w", alias, remote, err)
-	}
-
-	// Get the full image info
-	image, _, err := imgServer.GetImage(imgAlias.Target)
-	if err != nil {
-		return fmt.Errorf("getting image info for %q: %w", alias, err)
-	}
-
-	// Create instance from the remote image
+	// Tell the server to pull directly from the OCI registry
+	// This matches what the CLI does: the server handles the pull via skopeo/umoci
 	req := api.InstancesPost{
-		Name: name,
-		Type: api.InstanceTypeContainer,
+		Name:  name,
+		Type:  api.InstanceTypeContainer,
+		Start: true,
 		Source: api.InstanceSource{
-			Type: "image",
+			Type:     "image",
+			Alias:    alias,
+			Server:   remoteConfig.Addr,
+			Protocol: "oci",
+			Mode:     "pull",
 		},
 	}
 
-	op, err := c.conn.CreateInstanceFromImage(imgServer, *image, req)
+	op, err := c.conn.CreateInstance(req)
 	if err != nil {
 		return fmt.Errorf("creating %s: %w", name, err)
 	}
@@ -249,7 +242,8 @@ func (c *Client) LaunchOCI(ctx context.Context, name, imageRef string) error {
 		return fmt.Errorf("creating %s: %w", name, err)
 	}
 
-	return c.StartContainer(ctx, name)
+	// Instance already started via Start: true
+	return nil
 }
 
 func (c *Client) WaitForIP(ctx context.Context, name string, timeout time.Duration) (string, error) {
