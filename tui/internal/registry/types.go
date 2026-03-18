@@ -15,6 +15,7 @@ type App struct {
 	Image     string            `json:"image,omitempty"`
 	Domain    string            `json:"domain"`
 	Port      int               `json:"port"`
+	TLS       bool              `json:"tls"`
 	HasDB     bool              `json:"has_db"`
 	DBName    string            `json:"db_name,omitempty"`
 	DBUser    string            `json:"db_user,omitempty"`

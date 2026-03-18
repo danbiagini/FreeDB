@@ -32,8 +32,9 @@ var (
 )
 
 type refreshMsg struct {
-	rows []table.Row
-	err  error
+	rows       []table.Row
+	cpuReadings map[string]float64
+	err        error
 }
 
 type Model struct {
@@ -42,6 +43,9 @@ type Model struct {
 	registry    *registry.AppRegistry
 	cfg         *config.Config
 	lastRefresh time.Time
+	prevCPU     map[string]float64 // previous CPU seconds per container
+	prevTime    time.Time          // time of previous CPU reading
+	cpuPercent  map[string]float64 // computed CPU % per container
 	err         error
 }
 
@@ -49,9 +53,11 @@ func NewModel(ic *incus.Client, reg *registry.AppRegistry, cfg *config.Config) M
 	columns := []table.Column{
 		{Title: "Name", Width: 16},
 		{Title: "Status", Width: 10},
+		{Title: "Image", Width: 20},
 		{Title: "Domain", Width: 24},
 		{Title: "IP", Width: 16},
 		{Title: "Mem", Width: 8},
+		{Title: "CPU", Width: 8},
 	}
 
 	t := table.New(
@@ -87,13 +93,31 @@ func (m Model) Init() tea.Cmd {
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case refreshMsg:
-		m.lastRefresh = time.Now()
+		now := time.Now()
 		if msg.err != nil {
 			m.err = msg.err
 		} else {
 			m.err = nil
+			// Compute CPU % from delta
+			if m.prevCPU != nil && !m.prevTime.IsZero() {
+				elapsed := now.Sub(m.prevTime).Seconds()
+				if elapsed > 0 {
+					if m.cpuPercent == nil {
+						m.cpuPercent = make(map[string]float64)
+					}
+					for name, curr := range msg.cpuReadings {
+						if prev, ok := m.prevCPU[name]; ok {
+							delta := curr - prev
+							m.cpuPercent[name] = (delta / elapsed) * 100
+						}
+					}
+				}
+			}
+			m.prevCPU = msg.cpuReadings
+			m.prevTime = now
 			m.table.SetRows(msg.rows)
 		}
+		m.lastRefresh = now
 		return m, nil
 
 	case tickMsg:
@@ -126,10 +150,18 @@ func (m Model) View() string {
 	}
 
 	ago := time.Since(m.lastRefresh).Truncate(time.Second)
-	help := fmt.Sprintf("[a] Add App  [r] Refresh  [q] Quit                 Refreshed %s ago", ago)
+	help := fmt.Sprintf("[a] Add App  [enter] Manage  [r] Refresh  [q] Quit  Refreshed %s ago", ago)
 	b.WriteString(helpStyle.Render(help))
 
 	return b.String()
+}
+
+func (m Model) SelectedApp() string {
+	row := m.table.SelectedRow()
+	if row == nil {
+		return ""
+	}
+	return row[0] // Name column
 }
 
 type tickMsg time.Time
@@ -141,6 +173,7 @@ func (m Model) tick() tea.Cmd {
 }
 
 func (m Model) refresh() tea.Cmd {
+	cpuPercent := m.cpuPercent
 	return func() tea.Msg {
 		containers, err := m.incusClient.ListContainers(context.Background())
 		if err != nil {
@@ -158,6 +191,7 @@ func (m Model) refresh() tea.Cmd {
 		}
 
 		var rows []table.Row
+		cpuReadings := make(map[string]float64)
 
 		// Sort: system containers first, then apps alphabetically
 		sort.Slice(containers, func(i, j int) bool {
@@ -171,12 +205,21 @@ func (m Model) refresh() tea.Cmd {
 
 		for _, c := range containers {
 			domain := "—"
+			image := "—"
 			if app, ok := registeredApps[c.Name]; ok {
 				domain = app.Domain
+				// Show short image name (strip registry prefix, keep tag)
+				img := app.Image
+				if parts := strings.Split(img, "/"); len(parts) > 1 {
+					img = parts[len(parts)-1]
+				}
+				if img != "" {
+					image = img
+				}
 
 				// IP drift detection: if IP changed, update route and registry
 				if c.IP != "" && c.IP != app.LastIP && app.Domain != "" {
-					_ = traefik.PushRoute(m.incusClient, app.Name, app.Domain, c.IP, app.Port)
+					_ = traefik.PushRoute(m.incusClient, app.Name, app.Domain, c.IP, app.Port, app.TLS)
 					_ = m.registry.UpdateIP(app.Name, c.IP)
 				}
 			}
@@ -191,15 +234,23 @@ func (m Model) refresh() tea.Cmd {
 				ip = "—"
 			}
 
+			cpuReadings[c.Name] = c.CPUSeconds
+			cpu := "—"
+			if pct, ok := cpuPercent[c.Name]; ok && c.Status == "RUNNING" {
+				cpu = fmt.Sprintf("%.1f%%", pct)
+			}
+
 			rows = append(rows, table.Row{
 				c.Name,
 				c.Status,
+				image,
 				domain,
 				ip,
 				mem,
+				cpu,
 			})
 		}
 
-		return refreshMsg{rows: rows}
+		return refreshMsg{rows: rows, cpuReadings: cpuReadings}
 	}
 }

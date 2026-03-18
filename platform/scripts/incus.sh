@@ -30,7 +30,7 @@ EOF'
 sudo sed -r -i'.BAK' 's/^Components(.*)$/Components\1 contrib/g' /etc/apt/sources.list.d/debian.sources
 
 sudo apt-get update
-sudo apt-get install -yq incus postgresql-client cron jq
+sudo apt-get install -yq incus postgresql-client cron jq skopeo umoci
 
 # Install ZFS non-interactively (pre-accept the license prompt)
 echo "zfs-dkms zfs-dkms/note-incompatible-licenses note true" | sudo debconf-set-selections
@@ -77,6 +77,13 @@ sudo -u incus cp /etc/skel/.* /home/incus/ 2>/dev/null || true
 
 sudo -u incus mkdir -p /home/incus/.config/containers
 
+# Always ensure a valid auth.json exists (required by skopeo even for public registries)
+sudo -u incus tee /home/incus/.config/containers/auth.json > /dev/null << 'EOF'
+{
+  "auths": {}
+}
+EOF
+
 if [ -n "$KEY_FILE" ] && [ -f "$KEY_FILE" ]; then
   echo "Using service account key from $KEY_FILE"
   AUTH_STRING=$(echo -n "_json_key:$(cat "$KEY_FILE")" | base64 -w0)
@@ -89,39 +96,44 @@ if [ -n "$KEY_FILE" ] && [ -f "$KEY_FILE" ]; then
   }
 }
 EOF
-elif [ "$CLOUD" != "unknown" ]; then
-  echo "Setting up credential helper using instance metadata token"
+elif [ "$CLOUD" = "gcp" ]; then
+  echo "Setting up GCP credential helper for Artifact Registry"
 
-  # Write a credential helper script that uses cloud-env.sh
-  sudo tee /usr/local/bin/freedb-registry-auth.sh > /dev/null << HELPER
+  sudo tee /usr/local/bin/freedb-registry-auth.sh > /dev/null << 'HELPER'
 #!/bin/bash
-source ${SCRIPT_DIR}/cloud-env.sh 2>/dev/null
-REGISTRY="\${1:-us-central1-docker.pkg.dev}"
-build_registry_auth "\$REGISTRY"
+# Credential helper for GCP Artifact Registry
+# Outputs a valid auth.json — falls back to empty auths if token fetch fails
+TOKEN=$(curl -sf -H "Metadata-Flavor: Google" \
+  http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])" 2>/dev/null || echo "")
+
+if [ -n "$TOKEN" ]; then
+  AUTH=$(echo -n "oauth2accesstoken:${TOKEN}" | base64 -w0)
+  cat << AUTHEOF
+{
+  "auths": {
+    "us-central1-docker.pkg.dev": {
+      "auth": "${AUTH}"
+    }
+  }
+}
+AUTHEOF
+else
+  echo '{"auths": {}}'
+fi
 HELPER
   sudo chmod +x /usr/local/bin/freedb-registry-auth.sh
 
-  # Generate initial auth.json
-  REGISTRY="${FREEDB_REGISTRY:-us-central1-docker.pkg.dev}"
-  /usr/local/bin/freedb-registry-auth.sh "$REGISTRY" > /tmp/auth.json 2>/dev/null || true
-  if [ -s /tmp/auth.json ]; then
-    sudo -u incus cp /tmp/auth.json /home/incus/.config/containers/auth.json
-    rm -f /tmp/auth.json
+  /usr/local/bin/freedb-registry-auth.sh | sudo -u incus tee /home/incus/.config/containers/auth.json > /dev/null
 
-    # Refresh the token periodically (tokens expire)
-    CRON_LINE="*/45 * * * * /usr/local/bin/freedb-registry-auth.sh ${REGISTRY} > /home/incus/.config/containers/auth.json 2>/dev/null"
-    EXISTING=$(sudo -u incus crontab -l 2>/dev/null | grep -v freedb-registry-auth || true)
-    echo "${EXISTING:+$EXISTING
+  # Refresh the token every 45 minutes (expires every hour)
+  CRON_LINE="*/45 * * * * /usr/local/bin/freedb-registry-auth.sh > /home/incus/.config/containers/auth.json 2>/dev/null"
+  EXISTING=$(sudo -u incus crontab -l 2>/dev/null | grep -v freedb-registry-auth || true)
+  echo "${EXISTING:+$EXISTING
 }${CRON_LINE}" | sudo -u incus crontab -
-    echo "Credential helper installed with 45-minute token refresh cron"
-  else
-    echo "Warning: Could not generate registry auth token — skipping registry auth setup"
-    echo "You can pull images from public registries (e.g., Docker Hub) without auth"
-    rm -f /tmp/auth.json
-  fi
+  echo "Credential helper installed with 45-minute token refresh cron"
 else
-  echo "No cloud provider detected and no key file provided — skipping registry auth"
-  echo "You can pull images from public registries (e.g., Docker Hub) without auth"
+  echo "No private registry auth needed — using empty auth.json for public registries"
 fi
 
 # ============================================================================
@@ -171,6 +183,13 @@ if [ "$CLOUD" = "gcp" ]; then
   else
     sudo incus remote add gcr https://us-central1-docker.pkg.dev --protocol=oci
   fi
+fi
+
+# Add Docker Hub remote for OCI images
+if sudo incus remote list | grep -q docker; then
+  echo "Remote 'docker' already exists, skipping"
+else
+  sudo incus remote add docker https://docker.io --protocol=oci
 fi
 
 # Setup DNS for incus containers

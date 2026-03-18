@@ -9,11 +9,17 @@ const routeTemplate = `http:
   routers:
     {{.Name}}-router:
       entryPoints:
+{{- if .TLS}}
         - "websecure"
+{{- else}}
+        - "web"
+{{- end}}
       rule: "Host(` + "`" + `{{.Domain}}` + "`" + `)"
       service: {{.Name}}
+{{- if .TLS}}
       tls:
         certResolver: myresolver
+{{- end}}
   services:
     {{.Name}}:
       loadBalancer:
@@ -26,6 +32,7 @@ type RouteData struct {
 	Domain string
 	IP     string
 	Port   int
+	TLS    bool
 }
 
 func RenderRoute(data RouteData) ([]byte, error) {

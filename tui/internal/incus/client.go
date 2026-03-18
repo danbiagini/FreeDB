@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	incusclient "github.com/lxc/incus/v6/client"
 	"github.com/lxc/incus/v6/shared/api"
+	cliconfig "github.com/lxc/incus/v6/shared/cliconfig"
 )
 
 type Client struct {
@@ -189,16 +191,47 @@ func (c *Client) LaunchContainer(ctx context.Context, name, image string) error 
 	return c.StartContainer(ctx, name)
 }
 
-func (c *Client) LaunchOCI(ctx context.Context, name, remote, image string) error {
+// LaunchOCI launches a container from an OCI image using incus remotes.
+// imageRef examples: "docker.io/traefik/whoami", "traefik/whoami", "docker:traefik/whoami"
+func (c *Client) LaunchOCI(ctx context.Context, name, imageRef string) error {
+	remote := "docker"
+	alias := imageRef
+
+	if strings.Contains(imageRef, ":") {
+		parts := strings.SplitN(imageRef, ":", 2)
+		if !strings.Contains(parts[0], ".") && !strings.Contains(parts[0], "/") {
+			remote = parts[0]
+			alias = parts[1]
+		}
+	}
+
+	// Strip docker.io/ prefix — use the "docker" remote instead
+	alias = strings.TrimPrefix(alias, "docker.io/")
+
+	// Load incus client config to get remote server address
+	conf, err := cliconfig.LoadConfig("")
+	if err != nil {
+		return fmt.Errorf("loading incus config: %w", err)
+	}
+
+	remoteConfig, ok := conf.Remotes[remote]
+	if !ok {
+		return fmt.Errorf("remote %q not found in incus config", remote)
+	}
+
+	// Tell the server to pull directly from the OCI registry
+	// This matches what the CLI does: the server handles the pull via skopeo/umoci
 	req := api.InstancesPost{
-		Name: name,
+		Name:  name,
+		Type:  api.InstanceTypeContainer,
+		Start: true,
 		Source: api.InstanceSource{
 			Type:     "image",
+			Alias:    alias,
+			Server:   remoteConfig.Addr,
 			Protocol: "oci",
-			Server:   remote,
-			Alias:    image,
+			Mode:     "pull",
 		},
-		Type: api.InstanceTypeContainer,
 	}
 
 	op, err := c.conn.CreateInstance(req)
@@ -209,7 +242,8 @@ func (c *Client) LaunchOCI(ctx context.Context, name, remote, image string) erro
 		return fmt.Errorf("creating %s: %w", name, err)
 	}
 
-	return c.StartContainer(ctx, name)
+	// Instance already started via Start: true
+	return nil
 }
 
 func (c *Client) WaitForIP(ctx context.Context, name string, timeout time.Duration) (string, error) {

@@ -9,12 +9,13 @@ import (
 const proxyContainer = "proxy1"
 const routeDir = "/etc/traefik/manual"
 
-func PushRoute(ic *incus.Client, name, domain, ip string, port int) error {
+func PushRoute(ic *incus.Client, name, domain, ip string, port int, tls bool) error {
 	data := RouteData{
 		Name:   name,
 		Domain: domain,
 		IP:     ip,
 		Port:   port,
+		TLS:    tls,
 	}
 
 	content, err := RenderRoute(data)
