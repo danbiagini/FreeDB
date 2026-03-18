@@ -266,8 +266,13 @@ func (m Model) refresh() tea.Cmd {
 
 			cpuReadings[c.Name] = c.CPUSeconds
 			cpu := "—"
-			if pct, ok := cpuPercent[c.Name]; ok && c.Status == "RUNNING" {
-				cpu = fmt.Sprintf("%.1f%%", pct)
+			if _, ok := cpuPercent[c.Name]; ok && c.Status == "RUNNING" {
+				pct := cpuPercent[c.Name]
+				if pct < 0.1 {
+					cpu = "<0.1%"
+				} else {
+					cpu = fmt.Sprintf("%.1f%%", pct)
+				}
 			}
 
 			today := "—"
