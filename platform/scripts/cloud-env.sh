@@ -3,10 +3,13 @@
 # Source this file from other scripts: source "$(dirname "$0")/cloud-env.sh"
 
 detect_cloud() {
-  if curl -sf -m 1 -H "Metadata-Flavor: Google" \
+  if curl -sf -m 2 -H "Metadata-Flavor: Google" \
     http://metadata.google.internal/computeMetadata/v1/ >/dev/null 2>&1; then
     echo "gcp"
-  elif curl -sf -m 1 -o /dev/null http://169.254.169.254/latest/meta-data/ 2>/dev/null; then
+  elif curl -sf -m 2 -X PUT -H "X-aws-ec2-metadata-token-ttl-seconds: 10" \
+    http://169.254.169.254/latest/api/token >/dev/null 2>&1; then
+    echo "aws"
+  elif curl -sf -m 2 -o /dev/null http://169.254.169.254/latest/meta-data/ 2>/dev/null; then
     echo "aws"
   else
     echo "unknown"

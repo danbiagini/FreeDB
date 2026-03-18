@@ -51,6 +51,9 @@ if ! sudo modprobe zfs 2>/dev/null; then
   echo "After reboot, re-run the installer to continue setup."
   echo "================================================================"
   sudo reboot
+  # Wait for reboot to take effect — prevent script from continuing
+  sleep 300
+  exit 1
 fi
 
 # ============================================================================
