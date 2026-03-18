@@ -118,4 +118,3 @@ The `apps/` directory contains example app configurations:
 - [Incus documentation](https://linuxcontainers.org/incus/docs/main/installing/#linux)
 - [OpenTofu](https://opentofu.org/)
 
-[^1]: [Streamlit](https://streamlit.io/) offers a nice python-centric development experience with an impressive UX. The FE components use web sockets to communicate with the backend, which means as long as the browser is open there's an active connection keeping the instance up.
