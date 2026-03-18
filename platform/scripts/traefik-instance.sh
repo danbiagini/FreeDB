@@ -42,21 +42,29 @@ sudo incus exec proxy1 -- sudo chown -R traefik:traefik /etc/traefik/acme
 sudo incus exec proxy1 -- sudo chown -R traefik:traefik /etc/traefik/manual
 sudo incus exec proxy1 -- sudo chown -R traefik:traefik /etc/traefik/plugins-storage
 
-sudo incus file push  "$TRAEFIK_CONFIG_PATH" proxy1/etc/traefik/
+# Push base traefik config
+sudo incus file push "$TRAEFIK_CONFIG_PATH" proxy1/etc/traefik/
+
+# If cloud-saver credentials exist, append the plugin config
+CLOUD_SAVER_CONFIG="${CONFIG_DIR}/traefik-cloud-saver.toml"
+if sudo incus exec proxy1 -- test -f /etc/gcp-credentials/service_account.json; then
+  echo "GCP credentials found, enabling cloud-saver plugin"
+  sudo incus exec proxy1 -- sh -c "cat >> /etc/traefik/traefik.toml" < "$CLOUD_SAVER_CONFIG"
+else
+  echo "No GCP credentials at /etc/gcp-credentials/service_account.json — cloud-saver plugin disabled"
+  echo "To enable later, place credentials and re-run this script"
+fi
 
 sudo incus exec proxy1 -- sudo chown root:root /etc/traefik/traefik.toml
 sudo incus exec proxy1 -- sudo chmod 644 /etc/traefik/traefik.toml
 
-echo "pushing ${CONFIG_DIR}/traefik.service to proxy1/etc/systemd/system/"
 sudo incus file push "${CONFIG_DIR}/traefik.service" proxy1/etc/systemd/system/
 
 sudo incus exec proxy1 -- sudo chown root:root /etc/systemd/system/traefik.service
 sudo incus exec proxy1 -- sudo chmod 644 /etc/systemd/system/traefik.service
 sudo incus exec proxy1 -- sudo systemctl daemon-reload
+sudo incus exec proxy1 -- sudo systemctl enable traefik.service
 sudo incus exec proxy1 -- sudo systemctl start traefik.service
-
-sudo incus exec proxy1 -- sudo chmod 755 /etc/gcp-credentials
-# manually move the service_account.json file to that directory
 
 # Auto-detect host internal IP and proxy container IP for network forwarding
 HOST_INTERNAL_IP=$(curl -s -H "Metadata-Flavor: Google" \
