@@ -126,10 +126,18 @@ func (m Model) View() string {
 	}
 
 	ago := time.Since(m.lastRefresh).Truncate(time.Second)
-	help := fmt.Sprintf("[a] Add App  [r] Refresh  [q] Quit                 Refreshed %s ago", ago)
+	help := fmt.Sprintf("[a] Add App  [enter] Manage  [r] Refresh  [q] Quit  Refreshed %s ago", ago)
 	b.WriteString(helpStyle.Render(help))
 
 	return b.String()
+}
+
+func (m Model) SelectedApp() string {
+	row := m.table.SelectedRow()
+	if row == nil {
+		return ""
+	}
+	return row[0] // Name column
 }
 
 type tickMsg time.Time
