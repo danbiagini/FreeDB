@@ -6,12 +6,13 @@ set -euo pipefail
 KEY_FILE="${1:-}"
 
 SCRIPT_DIR=$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+source "${SCRIPT_DIR}/cloud-env.sh"
 
 # ============================================================================
 # Install packages
 # ============================================================================
 
-# Zabbly package repo (more recent incus version for debian 12)
+# Zabbly package repo (more recent incus version)
 # https://github.com/zabbly/incus
 sudo curl -fsSL https://pkgs.zabbly.com/key.asc -o /etc/apt/keyrings/zabbly.asc
 sudo sh -c 'cat <<EOF > /etc/apt/sources.list.d/zabbly-incus-stable.sources
@@ -29,11 +30,16 @@ EOF'
 sudo sed -r -i'.BAK' 's/^Components(.*)$/Components\1 contrib/g' /etc/apt/sources.list.d/debian.sources
 
 sudo apt-get update
-sudo apt-get install -yq incus postgresql-client-15 skopeo umoci
+sudo apt-get install -yq incus postgresql-client cron jq skopeo umoci
 
 # Install ZFS non-interactively (pre-accept the license prompt)
 echo "zfs-dkms zfs-dkms/note-incompatible-licenses note true" | sudo debconf-set-selections
-sudo DEBIAN_FRONTEND=noninteractive apt-get install -yq linux-headers-cloud-amd64 zfsutils-linux zfs-dkms zfs-zed
+# Use generic linux-headers for the current kernel (works across clouds)
+KERNEL_HEADERS="linux-headers-$(uname -r)"
+if ! apt-cache show "$KERNEL_HEADERS" &>/dev/null; then
+  KERNEL_HEADERS="linux-headers-cloud-amd64"
+fi
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -yq "$KERNEL_HEADERS" zfsutils-linux zfs-dkms zfs-zed
 
 # Check if ZFS module can load — if not, a reboot is needed for the new kernel
 if ! sudo modprobe zfs 2>/dev/null; then
@@ -45,6 +51,9 @@ if ! sudo modprobe zfs 2>/dev/null; then
   echo "After reboot, re-run the installer to continue setup."
   echo "================================================================"
   sudo reboot
+  # Wait for reboot to take effect — prevent script from continuing
+  sleep 300
+  exit 1
 fi
 
 # ============================================================================
@@ -144,31 +153,36 @@ fi
 
 sudo -u incus mkdir -p /home/incus/tmp
 
-# Auto-detect the attached persistent disk (non-boot disk)
-echo "Detecting attached persistent disk..."
-BOOT_DISK=$(readlink -f /dev/disk/by-id/google-persistent-disk-0 2>/dev/null || echo "")
-ATTACHED_DISK=$(ls /dev/disk/by-id/google-* 2>/dev/null | grep -v 'part' | grep -v 'persistent-disk-0' | head -1 || true)
+# Initialize incus if not already done (check if storage pool exists)
+if sudo incus storage list 2>/dev/null | grep -q pd-standard; then
+  echo "Incus already initialized, skipping"
+else
+  echo "Detecting attached persistent disk..."
+  ATTACHED_DISK=$(detect_attached_disk)
 
-if [ -z "$ATTACHED_DISK" ]; then
-  echo "Error: No attached persistent disk found. Expected a non-boot disk in /dev/disk/by-id/google-*"
-  exit 1
+  if [ -z "$ATTACHED_DISK" ]; then
+    echo "Error: No attached persistent disk found."
+    echo "Expected a non-boot block device for ZFS storage."
+    exit 1
+  fi
+  echo "Found attached disk: $ATTACHED_DISK"
+
+  echo "Initializing incus with preseed config..."
+  sed "s|/dev/disk/by-id/google-freedb-data-1|${ATTACHED_DISK}|g" \
+    "${SCRIPT_DIR}/../config/incus.yaml" | sudo incus admin init --preseed
 fi
-echo "Found attached disk: $ATTACHED_DISK"
-
-# Generate preseed config with the detected disk
-echo "Initializing incus with preseed config..."
-sed "s|/dev/disk/by-id/google-freedb-data-1|${ATTACHED_DISK}|g" \
-  "${SCRIPT_DIR}/../config/incus.yaml" | sudo incus admin init --preseed
 
 # ============================================================================
 # Post-init: registry remote, DNS, deploy helper
 # ============================================================================
 
-# Add artifact registry remote
-if sudo incus remote list | grep -q gcr; then
-  echo "Remote 'gcr' already exists, skipping"
-else
-  sudo incus remote add gcr https://us-central1-docker.pkg.dev --protocol=oci
+# Add artifact registry remote (GCP-specific, skip on other clouds)
+if [ "$CLOUD" = "gcp" ]; then
+  if sudo incus remote list | grep -q gcr; then
+    echo "Remote 'gcr' already exists, skipping"
+  else
+    sudo incus remote add gcr https://us-central1-docker.pkg.dev --protocol=oci
+  fi
 fi
 
 # Add Docker Hub remote for OCI images
@@ -185,9 +199,10 @@ sudo systemctl enable incus-dns-incusbr0.service
 sudo systemctl start incus-dns-incusbr0.service
 
 # Setup deploy helper
-sudo -u incus mkdir -p /home/incus/deploy
-sudo -u incus cp "${SCRIPT_DIR}/../../apps/deploy-container.sh" /home/incus/deploy/
-sudo -u incus chmod +x /home/incus/deploy/deploy-container.sh
+sudo mkdir -p /home/incus/deploy
+sudo cp "${SCRIPT_DIR}/../../apps/deploy-container.sh" /home/incus/deploy/
+sudo chown -R incus:incus /home/incus/deploy
+sudo chmod +x /home/incus/deploy/deploy-container.sh
 
 echo ""
 echo "================================================================"

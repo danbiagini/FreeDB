@@ -3,45 +3,43 @@ set -euo pipefail
 
 # This script will backup the postgresql database
 # and store it in a specified directory
- 
+
 # PARAMETERS
 # $1 database name (if none specified run pg_dumpall)
- 
+
 # CONSTANTS
-# postgres home folder backups directory
-# !! DO NOT specify trailing '/' as it is included below for readability !!
 BACKUP_DIRECTORY="/var/lib/postgresql/backups"
- 
-# Date stamp (formated YYYYMMDD)
-# just used in file name
+BACKUP_BUCKET="${FREEDB_BACKUP_BUCKET:-freedb-backup}"
 CURRENT_DATE=$(date "+%Y%m%d")
- 
+
 # !!! Important pg_dump command does not export users/groups tables
 # still need to maintain a pg_dumpall for full disaster recovery !!!
- 
-# this checks to see if the first command line argument is null
-if [ -z "$1" ]
-then
-# No database specified, do a full backup using pg_dumpall
-fileName=pg_dumpall_$CURRENT_DATE.sql.gz
-pg_dumpall | gzip - > $BACKUP_DIRECTORY/$fileName
- 
+
+if [ -z "${1:-}" ]; then
+  # No database specified, do a full backup using pg_dumpall
+  fileName=pg_dumpall_$CURRENT_DATE.sql.gz
+  pg_dumpall | gzip - > "$BACKUP_DIRECTORY/$fileName"
 else
-# Database named (command line argument) use pg_dump for targed backup
-fileName=$1_$CURRENT_DATE.sql.gz
-pg_dump $1 | gzip - > $BACKUP_DIRECTORY/$fileName
- 
+  # Database named (command line argument) use pg_dump for targeted backup
+  fileName=${1}_$CURRENT_DATE.sql.gz
+  pg_dump "$1" | gzip - > "$BACKUP_DIRECTORY/$fileName"
 fi
 
-# check if the fileName was created
-if [ -f "$BACKUP_DIRECTORY/$fileName" ]
-then
-gcloud storage cp $BACKUP_DIRECTORY/$fileName gs://freedb-backup/$(hostname)/$fileName
-echo "Backup of $1 completed successfully: $fileName"
+# Upload to cloud storage
+if [ -f "$BACKUP_DIRECTORY/$fileName" ]; then
+  # Try gcloud first, then aws, then warn
+  if command -v gcloud &>/dev/null; then
+    gcloud storage cp "$BACKUP_DIRECTORY/$fileName" "gs://${BACKUP_BUCKET}/$(hostname)/$fileName"
+  elif command -v aws &>/dev/null; then
+    aws s3 cp "$BACKUP_DIRECTORY/$fileName" "s3://${BACKUP_BUCKET}/$(hostname)/$fileName"
+  else
+    echo "Warning: No cloud CLI found, backup saved locally only: $BACKUP_DIRECTORY/$fileName"
+  fi
+  echo "Backup completed successfully: $fileName"
 
-# let's delete any backup files older than 1 month from the backup directory
-find $BACKUP_DIRECTORY -type f -mtime +30 -delete
-
+  # Delete local backups older than 1 month
+  find "$BACKUP_DIRECTORY" -type f -mtime +30 -delete
 else
-echo "Backup of $1 failed"
+  echo "Backup failed"
+  exit 1
 fi
