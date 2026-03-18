@@ -15,6 +15,13 @@ BRANCH="${FREEDB_BRANCH:-main}"
 INSTALL_DIR="${FREEDB_DIR:-$HOME/FreeDB}"
 REPO_URL="https://github.com/danbiagini/FreeDB.git"
 MARKER_FILE="$INSTALL_DIR/.freedb-install-phase"
+LOG_DIR="/var/log/freedb"
+LOG_FILE="${LOG_DIR}/install-$(date +%Y%m%d-%H%M%S).log"
+
+# Log all output to file while still showing on terminal
+sudo mkdir -p "$LOG_DIR"
+exec > >(sudo tee -a "$LOG_FILE") 2>&1
+echo "Install log: $LOG_FILE"
 
 echo "=============================="
 echo " FreeDB Installer"
