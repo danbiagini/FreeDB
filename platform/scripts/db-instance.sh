@@ -6,7 +6,11 @@ SCRIPT_DIR=$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 REPO_ROOT="${SCRIPT_DIR}/../.."
 source "${SCRIPT_DIR}/cloud-env.sh"
 
-sudo incus launch images:debian/12/cloud db1
+if sudo incus info db1 &>/dev/null; then
+  echo "db1 already exists, skipping launch"
+else
+  sudo incus launch images:debian/12/cloud db1
+fi
 
 # Force apt to use IPv4 (IPv6 is disabled on the incus bridge but containers may still try it)
 sudo incus exec db1 -- sh -c 'echo "Acquire::ForceIPv4 \"true\";" > /etc/apt/apt.conf.d/99force-ipv4'
