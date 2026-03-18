@@ -74,3 +74,8 @@ PROXY1_IP=$(sudo incus query '/1.0/instances/proxy1?recursion=1' | jq -r '.state
 echo "Setting up network forward: ${HOST_INTERNAL_IP} -> ${PROXY1_IP}:80,443,8080"
 sudo incus network forward create incusbr0 "${HOST_INTERNAL_IP}" || echo "Forward already exists, continuing"
 sudo incus network forward port add incusbr0 "${HOST_INTERNAL_IP}" tcp 80,443,8080 "${PROXY1_IP}"
+
+echo ""
+echo "================================================================"
+echo "Traefik setup complete!"
+echo "================================================================"
