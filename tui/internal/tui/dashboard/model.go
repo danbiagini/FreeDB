@@ -14,6 +14,7 @@ import (
 	"github.com/danbiagini/freedb-tui/internal/config"
 	"github.com/danbiagini/freedb-tui/internal/incus"
 	"github.com/danbiagini/freedb-tui/internal/registry"
+	"github.com/danbiagini/freedb-tui/internal/traefik"
 )
 
 var (
@@ -125,7 +126,7 @@ func (m Model) View() string {
 	}
 
 	ago := time.Since(m.lastRefresh).Truncate(time.Second)
-	help := fmt.Sprintf("[r] Refresh  [q] Quit                              Refreshed %s ago", ago)
+	help := fmt.Sprintf("[a] Add App  [r] Refresh  [q] Quit                 Refreshed %s ago", ago)
 	b.WriteString(helpStyle.Render(help))
 
 	return b.String()
@@ -172,6 +173,12 @@ func (m Model) refresh() tea.Cmd {
 			domain := "—"
 			if app, ok := registeredApps[c.Name]; ok {
 				domain = app.Domain
+
+				// IP drift detection: if IP changed, update route and registry
+				if c.IP != "" && c.IP != app.LastIP && app.Domain != "" {
+					_ = traefik.PushRoute(m.incusClient, app.Name, app.Domain, c.IP, app.Port)
+					_ = m.registry.UpdateIP(app.Name, c.IP)
+				}
 			}
 
 			mem := "—"

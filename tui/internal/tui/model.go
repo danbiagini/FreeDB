@@ -6,6 +6,7 @@ import (
 	"github.com/danbiagini/freedb-tui/internal/config"
 	"github.com/danbiagini/freedb-tui/internal/incus"
 	"github.com/danbiagini/freedb-tui/internal/registry"
+	"github.com/danbiagini/freedb-tui/internal/tui/addapp"
 	"github.com/danbiagini/freedb-tui/internal/tui/dashboard"
 )
 
@@ -23,6 +24,7 @@ type Model struct {
 	registry  *registry.AppRegistry
 	current   view
 	dashboard dashboard.Model
+	addApp    *addapp.Model
 	width     int
 	height    int
 	err       error
@@ -45,9 +47,16 @@ func (m Model) Init() tea.Cmd {
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		switch msg.String() {
-		case "q", "ctrl+c":
-			return m, tea.Quit
+		if m.current == viewDashboard {
+			switch msg.String() {
+			case "q", "ctrl+c":
+				return m, tea.Quit
+			case "a":
+				aa := addapp.NewModel(m.incus, m.registry, m.cfg)
+				m.addApp = &aa
+				m.current = viewAddApp
+				return m, aa.Init()
+			}
 		}
 
 	case tea.WindowSizeMsg:
@@ -60,6 +69,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		updated, cmd := m.dashboard.Update(msg)
 		m.dashboard = updated.(dashboard.Model)
 		return m, cmd
+
+	case viewAddApp:
+		if m.addApp != nil {
+			updated, cmd := m.addApp.Update(msg)
+			aa := updated.(addapp.Model)
+			m.addApp = &aa
+
+			if aa.Done() {
+				m.current = viewDashboard
+				m.addApp = nil
+				// Force a dashboard refresh
+				return m, m.dashboard.Init()
+			}
+
+			return m, cmd
+		}
 	}
 
 	return m, nil
@@ -67,9 +92,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) View() string {
 	switch m.current {
-	case viewDashboard:
-		return m.dashboard.View()
-	default:
-		return "Unknown view"
+	case viewAddApp:
+		if m.addApp != nil {
+			return m.addApp.View()
+		}
 	}
+	return m.dashboard.View()
 }

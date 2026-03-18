@@ -1,8 +1,10 @@
 package incus
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"time"
 
 	incusclient "github.com/lxc/incus/v6/client"
 	"github.com/lxc/incus/v6/shared/api"
@@ -123,4 +125,105 @@ func (c *Client) DeleteContainer(ctx context.Context, name string) error {
 		return fmt.Errorf("deleting %s: %w", name, err)
 	}
 	return op.Wait()
+}
+
+func (c *Client) PushFile(instance, path string, content []byte) error {
+	return c.conn.CreateInstanceFile(instance, path, incusclient.InstanceFileArgs{
+		Content:   bytes.NewReader(content),
+		UID:       0,
+		GID:       0,
+		Mode:      0644,
+		Type:      "file",
+		WriteMode: "overwrite",
+	})
+}
+
+func (c *Client) DeleteFile(instance, path string) error {
+	return c.conn.DeleteInstanceFile(instance, path)
+}
+
+func (c *Client) Exec(ctx context.Context, instance string, cmd []string) (string, error) {
+	var stdout, stderr bytes.Buffer
+
+	args := incusclient.InstanceExecArgs{
+		Stdout: &stdout,
+		Stderr: &stderr,
+	}
+
+	op, err := c.conn.ExecInstance(instance, api.InstanceExecPost{
+		Command:     cmd,
+		WaitForWS:   true,
+		Interactive: false,
+	}, &args)
+	if err != nil {
+		return "", fmt.Errorf("exec in %s: %w", instance, err)
+	}
+
+	if err := op.Wait(); err != nil {
+		return "", fmt.Errorf("exec in %s: %w (stderr: %s)", instance, err, stderr.String())
+	}
+
+	return stdout.String(), nil
+}
+
+func (c *Client) LaunchContainer(ctx context.Context, name, image string) error {
+	req := api.InstancesPost{
+		Name: name,
+		Source: api.InstanceSource{
+			Type:     "image",
+			Protocol: "simplestreams",
+			Server:   "https://images.linuxcontainers.org",
+			Alias:    image,
+		},
+		Type: api.InstanceTypeContainer,
+	}
+
+	op, err := c.conn.CreateInstance(req)
+	if err != nil {
+		return fmt.Errorf("creating %s: %w", name, err)
+	}
+	if err := op.Wait(); err != nil {
+		return fmt.Errorf("creating %s: %w", name, err)
+	}
+
+	return c.StartContainer(ctx, name)
+}
+
+func (c *Client) LaunchOCI(ctx context.Context, name, remote, image string) error {
+	req := api.InstancesPost{
+		Name: name,
+		Source: api.InstanceSource{
+			Type:     "image",
+			Protocol: "oci",
+			Server:   remote,
+			Alias:    image,
+		},
+		Type: api.InstanceTypeContainer,
+	}
+
+	op, err := c.conn.CreateInstance(req)
+	if err != nil {
+		return fmt.Errorf("creating %s: %w", name, err)
+	}
+	if err := op.Wait(); err != nil {
+		return fmt.Errorf("creating %s: %w", name, err)
+	}
+
+	return c.StartContainer(ctx, name)
+}
+
+func (c *Client) WaitForIP(ctx context.Context, name string, timeout time.Duration) (string, error) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		ip, err := c.GetContainerIP(ctx, name)
+		if err == nil && ip != "" {
+			return ip, nil
+		}
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+	return "", fmt.Errorf("timeout waiting for IP on %s", name)
 }
