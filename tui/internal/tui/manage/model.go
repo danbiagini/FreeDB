@@ -33,6 +33,11 @@ type logsResult struct {
 	err     error
 }
 
+type detailResult struct {
+	detail *incus.ContainerDetail
+	err    error
+}
+
 type Model struct {
 	appName     string
 	app         *registry.App
@@ -41,6 +46,7 @@ type Model struct {
 	registry    *registry.AppRegistry
 	subview     subview
 	viewport    viewport.Model
+	detail      *incus.ContainerDetail
 	message     string
 	err         error
 	done        bool
@@ -70,11 +76,29 @@ func NewModel(appName string, app *registry.App, isSystem bool, ic *incus.Client
 func (m Model) Done() bool { return m.done }
 
 func (m Model) Init() tea.Cmd {
-	return nil
+	return m.fetchDetail()
+}
+
+func (m Model) fetchDetail() tea.Cmd {
+	name := m.appName
+	ic := m.incusClient
+	return func() tea.Msg {
+		detail, err := ic.GetContainerDetail(context.Background(), name)
+		if err != nil {
+			return detailResult{err: err}
+		}
+		return detailResult{detail: detail}
+	}
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case detailResult:
+		if msg.err == nil {
+			m.detail = msg.detail
+		}
+		return m, nil
+
 	case actionResult:
 		m.busy = false
 		if msg.err != nil {
@@ -83,7 +107,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.message = msg.msg
 			m.err = nil
 		}
-		return m, nil
+		// Refresh detail after action
+		return m, m.fetchDetail()
 
 	case logsResult:
 		m.busy = false
@@ -209,17 +234,38 @@ func (m Model) View() string {
 	b.WriteString(titleStyle.Render(m.appName))
 	b.WriteString("\n\n")
 
-	if m.app != nil {
-		b.WriteString(fmt.Sprintf("  Type:   %s\n", m.app.Type))
-		b.WriteString(fmt.Sprintf("  Image:  %s\n", m.app.Image))
-		b.WriteString(fmt.Sprintf("  Domain: %s\n", m.app.Domain))
-		b.WriteString(fmt.Sprintf("  Port:   %d\n", m.app.Port))
-		b.WriteString(fmt.Sprintf("  IP:     %s\n", m.app.LastIP))
-		if m.app.HasDB {
-			b.WriteString(fmt.Sprintf("  DB:     %s\n", m.app.DBName))
+	// Show live container details
+	if m.detail != nil {
+		d := m.detail
+		b.WriteString(fmt.Sprintf("  Status:  %s\n", d.Status))
+		b.WriteString(fmt.Sprintf("  IP:      %s\n", d.IP))
+		if d.MemLimitMB > 0 {
+			b.WriteString(fmt.Sprintf("  Memory:  %d / %d MB\n", d.MemUsageMB, d.MemLimitMB))
+		} else if d.MemUsageMB > 0 {
+			b.WriteString(fmt.Sprintf("  Memory:  %d MB\n", d.MemUsageMB))
 		}
-	} else {
-		b.WriteString("  (system container)\n")
+		if d.DiskUsageMB > 0 {
+			b.WriteString(fmt.Sprintf("  Disk:    %d MB\n", d.DiskUsageMB))
+		}
+		b.WriteString(fmt.Sprintf("  CPU:     %.1f seconds\n", d.CPUSeconds))
+		if d.Processes > 0 {
+			b.WriteString(fmt.Sprintf("  Procs:   %d\n", d.Processes))
+		}
+		if d.BytesIn > 0 || d.BytesOut > 0 {
+			b.WriteString(fmt.Sprintf("  Net I/O: %s in / %s out\n", formatBytes(d.BytesIn), formatBytes(d.BytesOut)))
+		}
+		b.WriteString(fmt.Sprintf("  Created: %s\n", d.Created))
+	}
+
+	// Show app-specific info from registry
+	if m.app != nil {
+		b.WriteString("\n")
+		b.WriteString(fmt.Sprintf("  Image:   %s\n", m.app.Image))
+		b.WriteString(fmt.Sprintf("  Domain:  %s\n", m.app.Domain))
+		b.WriteString(fmt.Sprintf("  Port:    %d\n", m.app.Port))
+		if m.app.HasDB {
+			b.WriteString(fmt.Sprintf("  DB:      %s\n", m.app.DBName))
+		}
 	}
 
 	b.WriteString("\n")
@@ -255,6 +301,24 @@ func (m Model) View() string {
 	}
 
 	return b.String()
+}
+
+func formatBytes(b int64) string {
+	const (
+		KB = 1024
+		MB = KB * 1024
+		GB = MB * 1024
+	)
+	switch {
+	case b >= GB:
+		return fmt.Sprintf("%.1f GB", float64(b)/float64(GB))
+	case b >= MB:
+		return fmt.Sprintf("%.1f MB", float64(b)/float64(MB))
+	case b >= KB:
+		return fmt.Sprintf("%.1f KB", float64(b)/float64(KB))
+	default:
+		return fmt.Sprintf("%d B", b)
+	}
 }
 
 func (m Model) stopApp() tea.Cmd {

@@ -24,6 +24,21 @@ type ContainerInfo struct {
 	CPUSeconds float64
 }
 
+type ContainerDetail struct {
+	Name       string
+	Status     string
+	IP         string
+	MemUsageMB int64
+	MemLimitMB int64
+	DiskUsageMB int64
+	CPUSeconds float64
+	Pid        int64
+	Processes  int64
+	Created    string
+	BytesIn    int64
+	BytesOut   int64
+}
+
 func Connect(socketPath string) (*Client, error) {
 	var conn incusclient.InstanceServer
 	var err error
@@ -92,6 +107,46 @@ func (c *Client) GetContainerIP(ctx context.Context, name string) (string, error
 	}
 
 	return "", fmt.Errorf("no IPv4 address found for %s", name)
+}
+
+func (c *Client) GetContainerDetail(ctx context.Context, name string) (*ContainerDetail, error) {
+	inst, _, err := c.conn.GetInstanceFull(name)
+	if err != nil {
+		return nil, fmt.Errorf("getting instance %s: %w", name, err)
+	}
+
+	detail := &ContainerDetail{
+		Name:    inst.Name,
+		Status:  inst.Status,
+		Created: inst.CreatedAt.Format("2006-01-02 15:04"),
+	}
+
+	if inst.State != nil {
+		detail.Pid = inst.State.Pid
+		detail.Processes = inst.State.Processes
+		detail.MemUsageMB = inst.State.Memory.Usage / (1024 * 1024)
+		if inst.State.Memory.Total > 0 {
+			detail.MemLimitMB = inst.State.Memory.Total / (1024 * 1024)
+		}
+		detail.CPUSeconds = float64(inst.State.CPU.Usage) / 1e9
+
+		if eth0, ok := inst.State.Network["eth0"]; ok {
+			for _, addr := range eth0.Addresses {
+				if addr.Family == "inet" {
+					detail.IP = addr.Address
+					break
+				}
+			}
+			detail.BytesIn = eth0.Counters.BytesReceived
+			detail.BytesOut = eth0.Counters.BytesSent
+		}
+
+		if root, ok := inst.State.Disk["root"]; ok {
+			detail.DiskUsageMB = root.Usage / (1024 * 1024)
+		}
+	}
+
+	return detail, nil
 }
 
 func (c *Client) StartContainer(ctx context.Context, name string) error {
