@@ -4,6 +4,24 @@
 
 A Go + Bubbletea terminal UI that runs on the FreeDB host and provides a single interface for managing app deployments. It abstracts away Incus, Traefik routing, and database provisioning so deploying a new app doesn't require remembering how the platform works.
 
+## Operational Model
+
+The TUI is a **foreground tool** — SSH in, run `freedb`, do what you need, quit. It's not a daemon and doesn't need to stay running. This keeps the design simple and avoids the need for tmux/screen.
+
+A separate **metrics collector** runs as a systemd timer in the background. It scrapes Traefik's Prometheus endpoint once daily and appends to a metrics history file. When the TUI starts, it reads the history file to populate the "Today" and "7d avg" traffic columns immediately — no warm-up period needed.
+
+```
+┌──────────────────────────┐     ┌──────────────────────────────┐
+│  freedb (foreground TUI) │     │  freedb-metrics (background) │
+│                          │     │                              │
+│  Reads on startup:       │     │  Runs via systemd timer      │
+│  - Incus API (live)      │     │  (daily at midnight)         │
+│  - Traefik metrics (live)│     │                              │
+│  - metrics-history.json  │     │  Scrapes Traefik prometheus  │
+│                          │     │  Writes metrics-history.json │
+└──────────────────────────┘     └──────────────────────────────┘
+```
+
 ## Architecture
 
 ```
@@ -230,7 +248,9 @@ Delete shows a confirmation dialog and cleans up: container/VM, Traefik route, o
 ```
 tui/
   go.mod
-  main.go
+  main.go                            # TUI entry point
+  cmd/
+    metrics-collector/main.go        # Background metrics collector (systemd timer)
   internal/
     config/config.go
     registry/
