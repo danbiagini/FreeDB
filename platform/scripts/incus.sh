@@ -141,21 +141,24 @@ fi
 
 sudo -u incus mkdir -p /home/incus/tmp
 
-# Auto-detect the attached persistent disk (non-boot disk)
-echo "Detecting attached persistent disk..."
-ATTACHED_DISK=$(detect_attached_disk)
+# Initialize incus if not already done (check if storage pool exists)
+if sudo incus storage list 2>/dev/null | grep -q pd-standard; then
+  echo "Incus already initialized, skipping"
+else
+  echo "Detecting attached persistent disk..."
+  ATTACHED_DISK=$(detect_attached_disk)
 
-if [ -z "$ATTACHED_DISK" ]; then
-  echo "Error: No attached persistent disk found."
-  echo "Expected a non-boot block device for ZFS storage."
-  exit 1
+  if [ -z "$ATTACHED_DISK" ]; then
+    echo "Error: No attached persistent disk found."
+    echo "Expected a non-boot block device for ZFS storage."
+    exit 1
+  fi
+  echo "Found attached disk: $ATTACHED_DISK"
+
+  echo "Initializing incus with preseed config..."
+  sed "s|/dev/disk/by-id/google-freedb-data-1|${ATTACHED_DISK}|g" \
+    "${SCRIPT_DIR}/../config/incus.yaml" | sudo incus admin init --preseed
 fi
-echo "Found attached disk: $ATTACHED_DISK"
-
-# Generate preseed config with the detected disk
-echo "Initializing incus with preseed config..."
-sed "s|/dev/disk/by-id/google-freedb-data-1|${ATTACHED_DISK}|g" \
-  "${SCRIPT_DIR}/../config/incus.yaml" | sudo incus admin init --preseed
 
 # ============================================================================
 # Post-init: registry remote, DNS, deploy helper
