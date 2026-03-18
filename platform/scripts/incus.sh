@@ -6,12 +6,13 @@ set -euo pipefail
 KEY_FILE="${1:-}"
 
 SCRIPT_DIR=$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+source "${SCRIPT_DIR}/cloud-env.sh"
 
 # ============================================================================
 # Install packages
 # ============================================================================
 
-# Zabbly package repo (more recent incus version for debian 12)
+# Zabbly package repo (more recent incus version)
 # https://github.com/zabbly/incus
 sudo curl -fsSL https://pkgs.zabbly.com/key.asc -o /etc/apt/keyrings/zabbly.asc
 sudo sh -c 'cat <<EOF > /etc/apt/sources.list.d/zabbly-incus-stable.sources
@@ -29,11 +30,16 @@ EOF'
 sudo sed -r -i'.BAK' 's/^Components(.*)$/Components\1 contrib/g' /etc/apt/sources.list.d/debian.sources
 
 sudo apt-get update
-sudo apt-get install -yq incus postgresql-client-15
+sudo apt-get install -yq incus postgresql-client
 
 # Install ZFS non-interactively (pre-accept the license prompt)
 echo "zfs-dkms zfs-dkms/note-incompatible-licenses note true" | sudo debconf-set-selections
-sudo DEBIAN_FRONTEND=noninteractive apt-get install -yq linux-headers-cloud-amd64 zfsutils-linux zfs-dkms zfs-zed
+# Use generic linux-headers for the current kernel (works across clouds)
+KERNEL_HEADERS="linux-headers-$(uname -r)"
+if ! apt-cache show "$KERNEL_HEADERS" &>/dev/null; then
+  KERNEL_HEADERS="linux-headers-cloud-amd64"
+fi
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -yq "$KERNEL_HEADERS" zfsutils-linux zfs-dkms zfs-zed
 
 # Check if ZFS module can load — if not, a reboot is needed for the new kernel
 if ! sudo modprobe zfs 2>/dev/null; then
@@ -80,39 +86,39 @@ if [ -n "$KEY_FILE" ] && [ -f "$KEY_FILE" ]; then
   }
 }
 EOF
-else
-  echo "No key file provided, setting up credential helper using instance metadata token"
+elif [ "$CLOUD" != "unknown" ]; then
+  echo "Setting up credential helper using instance metadata token"
 
-  sudo tee /usr/local/bin/gcp-registry-auth.sh > /dev/null << 'HELPER'
+  # Write a credential helper script that uses cloud-env.sh
+  sudo tee /usr/local/bin/freedb-registry-auth.sh > /dev/null << HELPER
 #!/bin/bash
-# Credential helper for GCP Artifact Registry
-# Returns a fresh access token from the instance metadata server
-TOKEN=$(curl -s -H "Metadata-Flavor: Google" \
-  http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token \
-  | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
-AUTH=$(echo -n "oauth2accesstoken:${TOKEN}" | base64 -w0)
-cat << AUTHEOF
-{
-  "auths": {
-    "us-central1-docker.pkg.dev": {
-      "auth": "${AUTH}"
-    }
-  }
-}
-AUTHEOF
+source ${SCRIPT_DIR}/cloud-env.sh 2>/dev/null
+REGISTRY="\${1:-us-central1-docker.pkg.dev}"
+build_registry_auth "\$REGISTRY"
 HELPER
-  sudo chmod +x /usr/local/bin/gcp-registry-auth.sh
+  sudo chmod +x /usr/local/bin/freedb-registry-auth.sh
 
-  sudo -u incus /usr/local/bin/gcp-registry-auth.sh > /tmp/auth.json
-  sudo -u incus cp /tmp/auth.json /home/incus/.config/containers/auth.json
-  rm -f /tmp/auth.json
+  # Generate initial auth.json
+  REGISTRY="${FREEDB_REGISTRY:-us-central1-docker.pkg.dev}"
+  /usr/local/bin/freedb-registry-auth.sh "$REGISTRY" > /tmp/auth.json 2>/dev/null || true
+  if [ -s /tmp/auth.json ]; then
+    sudo -u incus cp /tmp/auth.json /home/incus/.config/containers/auth.json
+    rm -f /tmp/auth.json
 
-  # Refresh the token every 45 minutes (expires every hour)
-  CRON_LINE="*/45 * * * * /usr/local/bin/gcp-registry-auth.sh > /home/incus/.config/containers/auth.json"
-  EXISTING=$(sudo -u incus crontab -l 2>/dev/null | grep -v gcp-registry-auth || true)
-  echo "${EXISTING:+$EXISTING
+    # Refresh the token periodically (tokens expire)
+    CRON_LINE="*/45 * * * * /usr/local/bin/freedb-registry-auth.sh ${REGISTRY} > /home/incus/.config/containers/auth.json 2>/dev/null"
+    EXISTING=$(sudo -u incus crontab -l 2>/dev/null | grep -v freedb-registry-auth || true)
+    echo "${EXISTING:+$EXISTING
 }${CRON_LINE}" | sudo -u incus crontab -
-  echo "Credential helper installed with 45-minute token refresh cron"
+    echo "Credential helper installed with 45-minute token refresh cron"
+  else
+    echo "Warning: Could not generate registry auth token — skipping registry auth setup"
+    echo "You can pull images from public registries (e.g., Docker Hub) without auth"
+    rm -f /tmp/auth.json
+  fi
+else
+  echo "No cloud provider detected and no key file provided — skipping registry auth"
+  echo "You can pull images from public registries (e.g., Docker Hub) without auth"
 fi
 
 # ============================================================================
@@ -134,11 +140,11 @@ sudo -u incus mkdir -p /home/incus/tmp
 
 # Auto-detect the attached persistent disk (non-boot disk)
 echo "Detecting attached persistent disk..."
-BOOT_DISK=$(readlink -f /dev/disk/by-id/google-persistent-disk-0 2>/dev/null || echo "")
-ATTACHED_DISK=$(ls /dev/disk/by-id/google-* 2>/dev/null | grep -v 'part' | grep -v 'persistent-disk-0' | head -1 || true)
+ATTACHED_DISK=$(detect_attached_disk)
 
 if [ -z "$ATTACHED_DISK" ]; then
-  echo "Error: No attached persistent disk found. Expected a non-boot disk in /dev/disk/by-id/google-*"
+  echo "Error: No attached persistent disk found."
+  echo "Expected a non-boot block device for ZFS storage."
   exit 1
 fi
 echo "Found attached disk: $ATTACHED_DISK"
@@ -152,11 +158,13 @@ sed "s|/dev/disk/by-id/google-freedb-data-1|${ATTACHED_DISK}|g" \
 # Post-init: registry remote, DNS, deploy helper
 # ============================================================================
 
-# Add artifact registry remote
-if sudo incus remote list | grep -q gcr; then
-  echo "Remote 'gcr' already exists, skipping"
-else
-  sudo incus remote add gcr https://us-central1-docker.pkg.dev --protocol=oci
+# Add artifact registry remote (GCP-specific, skip on other clouds)
+if [ "$CLOUD" = "gcp" ]; then
+  if sudo incus remote list | grep -q gcr; then
+    echo "Remote 'gcr' already exists, skipping"
+  else
+    sudo incus remote add gcr https://us-central1-docker.pkg.dev --protocol=oci
+  fi
 fi
 
 # Setup DNS for incus containers

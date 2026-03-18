@@ -3,6 +3,7 @@ set -euo pipefail
 
 # Get the directory of the currently running script
 SCRIPT_DIR=$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+source "${SCRIPT_DIR}/cloud-env.sh"
 
 # Construct the full path to the traefik.toml file
 CONFIG_DIR="${SCRIPT_DIR}/../config"
@@ -67,8 +68,7 @@ sudo incus exec proxy1 -- sudo systemctl enable traefik.service
 sudo incus exec proxy1 -- sudo systemctl start traefik.service
 
 # Auto-detect host internal IP and proxy container IP for network forwarding
-HOST_INTERNAL_IP=$(curl -s -H "Metadata-Flavor: Google" \
-  http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/ip)
+HOST_INTERNAL_IP=$(get_internal_ip)
 PROXY1_IP=$(sudo incus query '/1.0/instances/proxy1?recursion=1' | jq -r '.state.network.eth0.addresses[] | select(.family == "inet") | .address')
 
 echo "Setting up network forward: ${HOST_INTERNAL_IP} -> ${PROXY1_IP}:80,443,8080"
