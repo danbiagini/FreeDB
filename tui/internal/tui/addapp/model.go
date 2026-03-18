@@ -89,6 +89,12 @@ func (m Model) Init() tea.Cmd {
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		// On the done screen, any key returns to dashboard
+		if m.step == stepDone {
+			m.done = true
+			return m, nil
+		}
+
 		switch msg.String() {
 		case "esc":
 			m.cancelled = true
@@ -108,13 +114,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case deployResult:
 		if msg.err != nil {
 			m.err = msg.err
-			m.step = stepDone
-			m.done = true
 		} else {
 			m.deployMsg = "App deployed successfully!"
-			m.step = stepDone
-			m.done = true
 		}
+		m.step = stepDone
 		return m, nil
 	}
 
