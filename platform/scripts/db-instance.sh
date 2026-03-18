@@ -30,6 +30,7 @@ DB1_IP=$(sudo incus query '/1.0/instances/db1?recursion=1' | jq -r '.state.netwo
 
 echo "Setting up network forward: ${HOST_INTERNAL_IP} -> ${DB1_IP}:5432"
 sudo incus network forward create incusbr0 "${HOST_INTERNAL_IP}" || echo "Forward already exists, continuing"
+sudo incus network forward port remove incusbr0 "${HOST_INTERNAL_IP}" tcp 5432 2>/dev/null || true
 sudo incus network forward port add incusbr0 "${HOST_INTERNAL_IP}" tcp 5432 "${DB1_IP}"
 
 sudo incus exec db1 -- sudo -u postgres cp "/etc/postgresql/${PG_VERSION}/main/pg_hba.conf" "/etc/postgresql/${PG_VERSION}/main/pg_hba.conf.bak"
