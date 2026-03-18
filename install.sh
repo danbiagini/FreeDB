@@ -11,6 +11,7 @@ set -euo pipefail
 BRANCH="${FREEDB_BRANCH:-main}"
 INSTALL_DIR="${FREEDB_DIR:-$HOME/FreeDB}"
 REPO_URL="https://github.com/danbiagini/FreeDB.git"
+MARKER_FILE="$INSTALL_DIR/.freedb-install-phase"
 
 echo "=============================="
 echo " FreeDB Installer"
@@ -41,17 +42,54 @@ else
   git checkout "$BRANCH"
 fi
 
-echo ""
-echo "Running incus setup..."
-./platform/scripts/incus.sh
+# Check if we're resuming after a reboot
+PHASE=$(cat "$MARKER_FILE" 2>/dev/null || echo "incus")
 
-echo ""
-echo "Running traefik setup..."
-./platform/scripts/traefik-instance.sh
+if [ "$PHASE" = "incus" ]; then
+  echo ""
+  echo "Running incus setup..."
+  ./platform/scripts/incus.sh
 
-echo ""
-echo "Running database setup..."
-./platform/scripts/db-instance.sh
+  # ZFS requires a reboot if the running kernel doesn't match the installed modules
+  if ! modprobe -n zfs 2>/dev/null; then
+    echo "post-reboot" > "$MARKER_FILE"
+    echo ""
+    echo "================================================================"
+    echo "ZFS kernel module requires a reboot."
+    echo "After reboot, re-run this installer to complete setup:"
+    echo ""
+    echo "  cd $INSTALL_DIR && FREEDB_BRANCH=$BRANCH ./install.sh"
+    echo "================================================================"
+    sudo reboot
+  fi
+fi
+
+if [ "$PHASE" = "incus" ] || [ "$PHASE" = "post-reboot" ]; then
+  # If resuming after reboot, re-run incus.sh (idempotent parts skip, picks up from init)
+  if [ "$PHASE" = "post-reboot" ]; then
+    echo ""
+    echo "Resuming after reboot..."
+    ./platform/scripts/incus.sh
+  fi
+
+  echo "traefik" > "$MARKER_FILE"
+fi
+
+if [ "$PHASE" = "traefik" ] || [ "$(cat "$MARKER_FILE" 2>/dev/null)" = "traefik" ]; then
+  echo ""
+  echo "Running traefik setup..."
+  ./platform/scripts/traefik-instance.sh
+  echo "db" > "$MARKER_FILE"
+fi
+
+if [ "$PHASE" = "db" ] || [ "$(cat "$MARKER_FILE" 2>/dev/null)" = "db" ]; then
+  echo ""
+  echo "Running database setup..."
+  ./platform/scripts/db-instance.sh
+fi
+
+# Clean up marker
+rm -f "$MARKER_FILE"
 
 echo ""
 echo "=============================="
