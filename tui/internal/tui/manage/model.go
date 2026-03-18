@@ -322,7 +322,7 @@ func (m Model) fetchLogs() tea.Cmd {
 	ic := m.incusClient
 	return func() tea.Msg {
 		output, err := ic.Exec(context.Background(), name, []string{
-			"journalctl", "-n", "200", "--no-pager",
+			"journalctl", "-n", "200", "--no-pager", "--no-hostname",
 		})
 		if err != nil {
 			// Fallback: try syslog
