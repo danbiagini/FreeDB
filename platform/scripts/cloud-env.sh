@@ -159,6 +159,7 @@ install_cloud_cli() {
       ;;
     aws)
       if ! command -v aws &>/dev/null; then
+        sudo apt-get install -yq unzip
         curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "/tmp/awscliv2.zip"
         cd /tmp && unzip -qo awscliv2.zip && sudo ./aws/install && rm -rf aws awscliv2.zip
         cd -

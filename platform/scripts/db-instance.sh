@@ -62,6 +62,7 @@ install_cloud_cli_in_container() {
       sudo incus exec db1 -- sh -c "apt-get update && apt-get install -yq google-cloud-cli"
       ;;
     aws)
+      sudo incus exec db1 -- apt-get install -yq unzip
       sudo incus exec db1 -- sh -c 'curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "/tmp/awscliv2.zip" && cd /tmp && unzip -qo awscliv2.zip && ./aws/install && rm -rf aws awscliv2.zip'
       ;;
     *)
