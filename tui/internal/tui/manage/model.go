@@ -278,7 +278,7 @@ func (m Model) startApp() tea.Cmd {
 		if app != nil && app.Domain != "" {
 			ip, err := ic.WaitForIP(ctx, name, 15_000_000_000) // 15s
 			if err == nil && ip != app.LastIP {
-				_ = traefik.PushRoute(ic, app.Name, app.Domain, ip, app.Port)
+				_ = traefik.PushRoute(ic, app.Name, app.Domain, ip, app.Port, app.TLS)
 				_ = reg.UpdateIP(app.Name, ip)
 			}
 		}
@@ -302,7 +302,7 @@ func (m Model) restartApp() tea.Cmd {
 		if app != nil && app.Domain != "" {
 			ip, err := ic.WaitForIP(ctx, name, 15_000_000_000)
 			if err == nil && ip != app.LastIP {
-				_ = traefik.PushRoute(ic, app.Name, app.Domain, ip, app.Port)
+				_ = traefik.PushRoute(ic, app.Name, app.Domain, ip, app.Port, app.TLS)
 				_ = reg.UpdateIP(app.Name, ip)
 			}
 		}

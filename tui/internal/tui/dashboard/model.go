@@ -184,7 +184,7 @@ func (m Model) refresh() tea.Cmd {
 
 				// IP drift detection: if IP changed, update route and registry
 				if c.IP != "" && c.IP != app.LastIP && app.Domain != "" {
-					_ = traefik.PushRoute(m.incusClient, app.Name, app.Domain, c.IP, app.Port)
+					_ = traefik.PushRoute(m.incusClient, app.Name, app.Domain, c.IP, app.Port, app.TLS)
 					_ = m.registry.UpdateIP(app.Name, c.IP)
 				}
 			}

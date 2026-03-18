@@ -27,6 +27,8 @@ const (
 	stepImage
 	stepDomain
 	stepPort
+	stepAdvanced // toggle to show advanced options
+	stepTLS
 	stepDB
 	stepConfirm
 	stepDeploying
@@ -41,6 +43,8 @@ type Model struct {
 	step        step
 	inputs      []textinput.Model
 	needsDB     bool
+	tls         bool
+	advanced    bool
 	incusClient *incus.Client
 	registry    *registry.AppRegistry
 	cfg         *config.Config
@@ -59,7 +63,7 @@ func NewModel(ic *incus.Client, reg *registry.AppRegistry, cfg *config.Config) M
 	inputs[0].CharLimit = 30
 
 	inputs[1] = textinput.New()
-	inputs[1].Placeholder = "images:debian/12/cloud"
+	inputs[1].Placeholder = "docker.io/traefik/whoami or debian/12/cloud"
 	inputs[1].CharLimit = 100
 
 	inputs[2] = textinput.New()
@@ -73,6 +77,7 @@ func NewModel(ic *incus.Client, reg *registry.AppRegistry, cfg *config.Config) M
 	return Model{
 		step:        stepName,
 		inputs:      inputs,
+		tls:         true, // default: TLS enabled
 		incusClient: ic,
 		registry:    reg,
 		cfg:         cfg,
@@ -89,7 +94,6 @@ func (m Model) Init() tea.Cmd {
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		// On the done screen, any key returns to dashboard
 		if m.step == stepDone {
 			m.done = true
 			return m, nil
@@ -101,9 +105,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.done = true
 			return m, nil
 
+		case "tab":
+			if m.step == stepAdvanced {
+				m.advanced = true
+				m.step = stepTLS
+				return m, nil
+			}
+
 		case "y", "n":
+			if m.step == stepTLS {
+				m.tls = msg.String() == "y"
+				m.step = stepDB
+				return m, nil
+			}
 			if m.step == stepDB {
-				m.handleDBStep(msg.String())
+				m.needsDB = msg.String() == "y"
+				m.step = stepConfirm
 				return m, nil
 			}
 
@@ -121,7 +138,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	if m.step < stepDB {
+	if m.step <= stepPort {
 		var cmd tea.Cmd
 		idx := int(m.step)
 		m.inputs[idx], cmd = m.inputs[idx].Update(msg)
@@ -171,11 +188,18 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 
 	case stepPort:
 		m.err = nil
-		m.step = stepDB
+		m.step = stepAdvanced
+		return m, nil
+
+	case stepAdvanced:
+		// Enter skips advanced, go straight to confirm with defaults
+		m.step = stepConfirm
+		return m, nil
+
+	case stepTLS:
 		return m, nil
 
 	case stepDB:
-		// Handled by y/n keys below
 		return m, nil
 
 	case stepConfirm:
@@ -191,35 +215,82 @@ func (m Model) View() string {
 	errStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
 	successStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
 	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
 
 	var b strings.Builder
 	b.WriteString(titleStyle.Render("Add App"))
 	b.WriteString("\n\n")
 
-	labels := []string{"Name:", "Image:", "Domain:", "Port:"}
+	labels := []string{"App name:", "Image:", "Domain:", "App port:"}
+	hints := []string{
+		"",
+		"",
+		"",
+		"(port your app listens on inside the container)",
+	}
 
 	for i, label := range labels {
 		if m.step > step(i) {
-			b.WriteString(fmt.Sprintf("  %s %s\n", label, m.inputs[i].Value()))
+			val := m.inputs[i].Value()
+			hint := ""
+			if i == 3 {
+				hint = "  " + dimStyle.Render(hints[i])
+			}
+			b.WriteString(fmt.Sprintf("  %s %s%s\n", labelStyle.Render(label), val, hint))
 		} else if m.step == step(i) {
-			b.WriteString(fmt.Sprintf("  %s %s\n", label, m.inputs[i].View()))
+			hint := ""
+			if hints[i] != "" {
+				hint = "  " + dimStyle.Render(hints[i])
+			}
+			b.WriteString(fmt.Sprintf("  %s %s%s\n", labelStyle.Render(label), m.inputs[i].View(), hint))
 		}
 	}
 
+	// Advanced options toggle
+	if m.step == stepAdvanced {
+		domain := m.inputs[2].Value()
+		b.WriteString("\n")
+		b.WriteString(dimStyle.Render(fmt.Sprintf("  External: https://%s (port 443, TLS via Let's Encrypt)", domain)))
+		b.WriteString("\n\n")
+		b.WriteString("  [tab] Advanced options  [enter] Deploy with defaults  [esc] Cancel\n")
+		return b.String()
+	}
+
+	// Show advanced options if expanded
+	if m.advanced && m.step >= stepTLS {
+		if m.step == stepTLS {
+			b.WriteString(fmt.Sprintf("\n  %s [y/n] ", labelStyle.Render("TLS (Let's Encrypt):")))
+		} else {
+			tlsStr := "yes (Let's Encrypt)"
+			if !m.tls {
+				tlsStr = "no (HTTP only)"
+			}
+			b.WriteString(fmt.Sprintf("  %s %s\n", labelStyle.Render("TLS:"), tlsStr))
+		}
+	}
+
+	// Database option
 	if m.step >= stepDB && m.step < stepDeploying {
 		if m.step == stepDB {
-			b.WriteString("\n  Needs database? [y/n] ")
-		} else {
+			b.WriteString(fmt.Sprintf("\n  %s [y/n] ", labelStyle.Render("Needs database?")))
+		} else if m.step > stepDB {
 			dbStr := "no"
 			if m.needsDB {
 				dbStr = "yes"
 			}
-			b.WriteString(fmt.Sprintf("  Database: %s\n", dbStr))
+			b.WriteString(fmt.Sprintf("  %s %s\n", labelStyle.Render("Database:"), dbStr))
 		}
 	}
 
+	// External access summary
 	if m.step == stepConfirm {
-		b.WriteString("\n  Press [enter] to deploy, [esc] to cancel\n")
+		domain := m.inputs[2].Value()
+		if m.tls {
+			b.WriteString(dimStyle.Render(fmt.Sprintf("\n  External: https://%s (port 443, TLS via Let's Encrypt)", domain)))
+		} else {
+			b.WriteString(dimStyle.Render(fmt.Sprintf("\n  External: http://%s (port 80, no TLS)", domain)))
+		}
+		b.WriteString("\n\n  Press [enter] to deploy, [esc] to cancel\n")
 	}
 
 	if m.step == stepDeploying {
@@ -231,28 +302,26 @@ func (m Model) View() string {
 			b.WriteString("\n" + errStyle.Render(fmt.Sprintf("  Deploy failed: %v", m.err)) + "\n")
 		} else {
 			b.WriteString("\n" + successStyle.Render("  "+m.deployMsg) + "\n")
+			domain := m.inputs[2].Value()
+			if m.tls {
+				b.WriteString(dimStyle.Render(fmt.Sprintf("  Access at: https://%s", domain)) + "\n")
+			} else {
+				b.WriteString(dimStyle.Render(fmt.Sprintf("  Access at: http://%s", domain)) + "\n")
+			}
 		}
 		b.WriteString(dimStyle.Render("\n  Press any key to return to dashboard"))
+		return b.String()
 	}
 
 	if m.err != nil && m.step < stepDone {
 		b.WriteString("\n" + errStyle.Render(fmt.Sprintf("  %v", m.err)))
 	}
 
-	b.WriteString(dimStyle.Render("\n\n  [esc] Cancel"))
+	if m.step != stepAdvanced {
+		b.WriteString(dimStyle.Render("\n\n  [esc] Cancel"))
+	}
 
 	return b.String()
-}
-
-func (m *Model) handleDBStep(key string) {
-	switch key {
-	case "y":
-		m.needsDB = true
-		m.step = stepConfirm
-	case "n":
-		m.needsDB = false
-		m.step = stepConfirm
-	}
 }
 
 func (m Model) deploy() tea.Cmd {
@@ -261,6 +330,7 @@ func (m Model) deploy() tea.Cmd {
 	domain := strings.TrimSpace(m.inputs[2].Value())
 	portStr := strings.TrimSpace(m.inputs[3].Value())
 	needsDB := m.needsDB
+	tls := m.tls
 
 	port := 8080
 	if portStr != "" {
@@ -294,7 +364,7 @@ func (m Model) deploy() tea.Cmd {
 		}
 
 		// Create Traefik route
-		if err := traefik.PushRoute(ic, name, domain, ip, port); err != nil {
+		if err := traefik.PushRoute(ic, name, domain, ip, port, tls); err != nil {
 			return deployResult{err: fmt.Errorf("creating route: %w", err)}
 		}
 
@@ -314,6 +384,7 @@ func (m Model) deploy() tea.Cmd {
 			Image:     image,
 			Domain:    domain,
 			Port:      port,
+			TLS:       tls,
 			HasDB:     needsDB,
 			DBName:    dbName,
 			DBUser:    dbName,
