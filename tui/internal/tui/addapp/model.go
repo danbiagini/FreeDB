@@ -270,9 +270,18 @@ func (m Model) deploy() tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
 
-		// Launch container
-		if err := ic.LaunchContainer(ctx, name, image); err != nil {
-			return deployResult{err: fmt.Errorf("launching container: %w", err)}
+		// Launch container — detect OCI vs Linux container image
+		isOCI := strings.Contains(image, "docker.io") ||
+			strings.Contains(image, ".io/") ||
+			strings.Contains(image, ".com/")
+		if isOCI {
+			if err := ic.LaunchOCI(ctx, name, image, ""); err != nil {
+				return deployResult{err: fmt.Errorf("launching OCI container: %w", err)}
+			}
+		} else {
+			if err := ic.LaunchContainer(ctx, name, image); err != nil {
+				return deployResult{err: fmt.Errorf("launching container: %w", err)}
+			}
 		}
 
 		// Wait for IP

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	incusclient "github.com/lxc/incus/v6/client"
@@ -189,14 +190,33 @@ func (c *Client) LaunchContainer(ctx context.Context, name, image string) error 
 	return c.StartContainer(ctx, name)
 }
 
-func (c *Client) LaunchOCI(ctx context.Context, name, remote, image string) error {
+// LaunchOCI launches a container from an OCI image reference.
+// imageRef can be a full reference like "docker.io/traefik/whoami" or just "traefik/whoami".
+// If remote is empty, it's parsed from imageRef.
+func (c *Client) LaunchOCI(ctx context.Context, name, imageRef, remote string) error {
+	server := remote
+	alias := imageRef
+
+	if server == "" {
+		// Parse "docker.io/traefik/whoami" -> server="https://docker.io", alias="traefik/whoami"
+		parts := strings.SplitN(imageRef, "/", 2)
+		if len(parts) == 2 && strings.Contains(parts[0], ".") {
+			server = "https://" + parts[0]
+			alias = parts[1]
+		} else {
+			// Default to Docker Hub
+			server = "https://docker.io"
+			alias = imageRef
+		}
+	}
+
 	req := api.InstancesPost{
 		Name: name,
 		Source: api.InstanceSource{
 			Type:     "image",
 			Protocol: "oci",
-			Server:   remote,
-			Alias:    image,
+			Server:   server,
+			Alias:    alias,
 		},
 		Type: api.InstanceTypeContainer,
 	}
