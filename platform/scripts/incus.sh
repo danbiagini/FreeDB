@@ -177,9 +177,10 @@ sudo systemctl enable incus-dns-incusbr0.service
 sudo systemctl start incus-dns-incusbr0.service
 
 # Setup deploy helper
-sudo -u incus mkdir -p /home/incus/deploy
-sudo -u incus cp "${SCRIPT_DIR}/../../apps/deploy-container.sh" /home/incus/deploy/
-sudo -u incus chmod +x /home/incus/deploy/deploy-container.sh
+sudo mkdir -p /home/incus/deploy
+sudo cp "${SCRIPT_DIR}/../../apps/deploy-container.sh" /home/incus/deploy/
+sudo chown -R incus:incus /home/incus/deploy
+sudo chmod +x /home/incus/deploy/deploy-container.sh
 
 echo ""
 echo "================================================================"
