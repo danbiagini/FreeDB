@@ -29,7 +29,7 @@ EOF'
 sudo sed -r -i'.BAK' 's/^Components(.*)$/Components\1 contrib/g' /etc/apt/sources.list.d/debian.sources
 
 sudo apt-get update
-sudo apt-get install -yq incus postgresql-client-15 skopeo
+sudo apt-get install -yq incus postgresql-client-15 skopeo umoci
 
 # Install ZFS non-interactively (pre-accept the license prompt)
 echo "zfs-dkms zfs-dkms/note-incompatible-licenses note true" | sudo debconf-set-selections
