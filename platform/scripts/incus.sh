@@ -35,6 +35,18 @@ sudo apt-get install -yq incus postgresql-client-15
 echo "zfs-dkms zfs-dkms/note-incompatible-licenses note true" | sudo debconf-set-selections
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -yq linux-headers-cloud-amd64 zfsutils-linux zfs-dkms zfs-zed
 
+# Check if ZFS module can load — if not, a reboot is needed for the new kernel
+if ! sudo modprobe zfs 2>/dev/null; then
+  echo ""
+  echo "================================================================"
+  echo "ZFS kernel module requires a reboot (installed for a newer kernel"
+  echo "than currently running). Rebooting now..."
+  echo ""
+  echo "After reboot, re-run the installer to continue setup."
+  echo "================================================================"
+  sudo reboot
+fi
+
 # ============================================================================
 # Configure incus user
 # ============================================================================
