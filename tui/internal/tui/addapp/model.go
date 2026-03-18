@@ -278,7 +278,7 @@ func (m Model) deploy() tea.Cmd {
 			strings.Contains(image, ".io/") ||
 			strings.Contains(image, ".com/")
 		if isOCI {
-			if err := ic.LaunchOCI(ctx, name, image, ""); err != nil {
+			if err := ic.LaunchOCI(ctx, name, image); err != nil {
 				return deployResult{err: fmt.Errorf("launching OCI container: %w", err)}
 			}
 		} else {

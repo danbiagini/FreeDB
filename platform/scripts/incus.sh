@@ -159,6 +159,13 @@ else
   sudo incus remote add gcr https://us-central1-docker.pkg.dev --protocol=oci
 fi
 
+# Add Docker Hub remote for OCI images
+if sudo incus remote list | grep -q docker; then
+  echo "Remote 'docker' already exists, skipping"
+else
+  sudo incus remote add docker https://docker.io --protocol=oci
+fi
+
 # Setup DNS for incus containers
 sudo cp "${SCRIPT_DIR}/../config/incus-dns.service" /etc/systemd/system/incus-dns-incusbr0.service
 sudo systemctl daemon-reload

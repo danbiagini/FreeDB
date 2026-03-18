@@ -9,6 +9,7 @@ import (
 
 	incusclient "github.com/lxc/incus/v6/client"
 	"github.com/lxc/incus/v6/shared/api"
+	cliconfig "github.com/lxc/incus/v6/shared/cliconfig"
 )
 
 type Client struct {
@@ -190,38 +191,57 @@ func (c *Client) LaunchContainer(ctx context.Context, name, image string) error 
 	return c.StartContainer(ctx, name)
 }
 
-// LaunchOCI launches a container from an OCI image reference.
-// imageRef can be a full reference like "docker.io/traefik/whoami" or just "traefik/whoami".
-// If remote is empty, it's parsed from imageRef.
-func (c *Client) LaunchOCI(ctx context.Context, name, imageRef, remote string) error {
-	server := remote
+// LaunchOCI launches a container from an OCI image using incus remotes.
+// imageRef examples: "docker.io/traefik/whoami", "traefik/whoami", "docker:traefik/whoami"
+func (c *Client) LaunchOCI(ctx context.Context, name, imageRef string) error {
+	remote := "docker"
 	alias := imageRef
 
-	if server == "" {
-		// Parse "docker.io/traefik/whoami" -> server="https://docker.io", alias="traefik/whoami"
-		parts := strings.SplitN(imageRef, "/", 2)
-		if len(parts) == 2 && strings.Contains(parts[0], ".") {
-			server = "https://" + parts[0]
+	if strings.Contains(imageRef, ":") {
+		parts := strings.SplitN(imageRef, ":", 2)
+		if !strings.Contains(parts[0], ".") && !strings.Contains(parts[0], "/") {
+			remote = parts[0]
 			alias = parts[1]
-		} else {
-			// Default to Docker Hub
-			server = "https://docker.io"
-			alias = imageRef
 		}
 	}
 
-	req := api.InstancesPost{
-		Name: name,
-		Source: api.InstanceSource{
-			Type:     "image",
-			Protocol: "oci",
-			Server:   server,
-			Alias:    alias,
-		},
-		Type: api.InstanceTypeContainer,
+	// Strip docker.io/ prefix — use the "docker" remote instead
+	alias = strings.TrimPrefix(alias, "docker.io/")
+
+	// Load incus client config to access configured remotes
+	conf, err := cliconfig.LoadConfig("")
+	if err != nil {
+		return fmt.Errorf("loading incus config: %w", err)
 	}
 
-	op, err := c.conn.CreateInstance(req)
+	// Connect to the OCI remote image server
+	imgServer, err := conf.GetImageServer(remote)
+	if err != nil {
+		return fmt.Errorf("connecting to remote %q: %w", remote, err)
+	}
+
+	// Resolve the image alias
+	imgAlias, _, err := imgServer.GetImageAlias(alias)
+	if err != nil {
+		return fmt.Errorf("resolving image %q on remote %q: %w", alias, remote, err)
+	}
+
+	// Get the full image info
+	image, _, err := imgServer.GetImage(imgAlias.Target)
+	if err != nil {
+		return fmt.Errorf("getting image info for %q: %w", alias, err)
+	}
+
+	// Create instance from the remote image
+	req := api.InstancesPost{
+		Name: name,
+		Type: api.InstanceTypeContainer,
+		Source: api.InstanceSource{
+			Type: "image",
+		},
+	}
+
+	op, err := c.conn.CreateInstanceFromImage(imgServer, *image, req)
 	if err != nil {
 		return fmt.Errorf("creating %s: %w", name, err)
 	}
