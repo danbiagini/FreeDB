@@ -147,12 +147,12 @@ Same template works for container apps (Incus bridge IP) and VM apps (VPC subnet
 ```
 ┌─ FreeDB ──────────────────────────────────────────────────────┐
 │                                                                │
-│  Name          Type       Status    Domain              Mem    │
-│  ─────────────────────────────────────────────────────────────│
-│  proxy1        system     RUNNING   —                   64MB   │
-│  db1           system     RUNNING   —                   256MB  │
-│  myapp         container  RUNNING   myapp.example.com   128MB  │
-│  ml-pipeline   vm         STOPPED   ml.example.com      —      │
+│  Name          Type       Status    Domain              Mem     Req/min  Errors │
+│  ────────────────────────────────────────────────────────────────────────────────│
+│  proxy1        system     RUNNING   —                   64MB    —        —      │
+│  db1           system     RUNNING   —                   256MB   —        —      │
+│  myapp         container  RUNNING   myapp.example.com   128MB   12.3     0.1%   │
+│  ml-pipeline   vm         STOPPED   ml.example.com      —       0        —      │
 │                                                                │
 │  [a] Add App  [enter] Manage  [q] Quit     Refreshed 2s ago   │
 └────────────────────────────────────────────────────────────────┘
@@ -222,6 +222,7 @@ tui/
     traefik/
       routes.go
       template.go          # embedded YAML template
+      metrics.go           # scrape and parse Prometheus metrics from proxy1
     db/
       postgres.go
     tui/
@@ -249,6 +250,7 @@ github.com/charmbracelet/bubbletea  # TUI framework
 github.com/charmbracelet/bubbles    # Table, textinput, viewport, spinner
 github.com/charmbracelet/lipgloss   # Styling
 github.com/lib/pq                   # PostgreSQL driver
+github.com/prometheus/common        # Prometheus metrics text format parser
 cloud.google.com/go/compute         # GCP Compute Engine SDK
 golang.org/x/crypto/ssh             # SSH for VM setup
 ```
@@ -273,14 +275,26 @@ golang.org/x/crypto/ssh             # SSH for VM setup
 - Delete with full cleanup (container, route, DB, registry)
 - **Milestone:** Full container app lifecycle through TUI
 
-### Phase 4: VM Apps + Cloud Provider
+### Phase 4: Traffic Metrics Dashboard
+- Scrape Traefik's Prometheus metrics endpoint (`http://proxy1:8080/metrics`)
+- Parse Prometheus text format (lightweight parser or `github.com/prometheus/common/expfmt`)
+- Per-app KPIs on the dashboard:
+  - Request rate (requests/min, calculated from delta between refreshes)
+  - Active connections
+  - Error rate (% of 4xx/5xx responses)
+  - Bandwidth (bytes in/out)
+- Aggregate KPIs in the status bar (total requests, overall error rate)
+- Cache metrics between refreshes, compute rates from deltas
+- **Milestone:** Dashboard shows live traffic stats per app alongside container metrics
+
+### Phase 5: VM Apps + Cloud Provider
 - CloudProvider interface with GCP implementation
 - Add-app wizard VM path (provision via Compute Engine API)
 - VM management (start/stop/delete via cloud API)
 - AWS stub
 - **Milestone:** Provision a VM-based app via TUI with Traefik routing
 
-### Phase 5: Polish
+### Phase 6: Polish
 - Error handling and graceful degradation
 - `--check` flag for environment validation
 - Makefile with build/install/test targets
