@@ -8,7 +8,7 @@ SCRIPT_DIR=$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 CONFIG_DIR="${SCRIPT_DIR}/../config"
 TRAEFIK_CONFIG_PATH="${CONFIG_DIR}/traefik.toml"
 
-TRAEFIK_VERSION="${TRAEFIK_VERSION:-3.1.7}"
+TRAEFIK_VERSION="${TRAEFIK_VERSION:-3.6.10}"
 
 sudo incus launch images:debian/12/cloud proxy1
 
