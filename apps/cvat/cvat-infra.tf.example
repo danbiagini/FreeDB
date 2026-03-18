@@ -1,0 +1,43 @@
+# Example Terraform for provisioning a dedicated CVAT VM
+# This was originally in infra/main.tf but removed to keep the platform
+# layer generic. Preserved here as a reference for VM-based app deployments.
+#
+# In the future, the TUI will handle provisioning VMs like this dynamically.
+
+resource "google_compute_disk" "cvat-data" {
+  name = "${local.prefix}cvat-data-1"
+  type = "pd-balanced"
+  zone = "us-central1-a"
+  size = "50"
+}
+
+resource "google_compute_instance" "freedb-cvat" {
+  name         = "${local.prefix}cvat"
+  machine_type = "n2-standard-2"
+  zone         = "us-central1-a"
+  tags         = ["${local.prefix}ssh"]
+  allow_stopping_for_update = true
+
+  boot_disk {
+    initialize_params {
+      image = "ubuntu-os-cloud/ubuntu-2404-lts-amd64"
+    }
+  }
+
+  attached_disk {
+    source = google_compute_disk.cvat-data.id
+    device_name = google_compute_disk.cvat-data.name
+  }
+
+  network_interface {
+    subnetwork = google_compute_subnetwork.default.id
+    access_config {
+      network_tier = "STANDARD"
+    }
+  }
+
+  service_account {
+    scopes = ["cloud-platform"]
+    email = data.google_service_account.default.email
+  }
+}
