@@ -68,6 +68,13 @@ sudo -u incus cp /etc/skel/.* /home/incus/ 2>/dev/null || true
 
 sudo -u incus mkdir -p /home/incus/.config/containers
 
+# Always ensure a valid auth.json exists (required by skopeo even for public registries)
+sudo -u incus tee /home/incus/.config/containers/auth.json > /dev/null << 'EOF'
+{
+  "auths": {}
+}
+EOF
+
 if [ -n "$KEY_FILE" ] && [ -f "$KEY_FILE" ]; then
   echo "Using service account key from $KEY_FILE"
   AUTH_STRING=$(echo -n "_json_key:$(cat "$KEY_FILE")" | base64 -w0)
@@ -80,18 +87,20 @@ if [ -n "$KEY_FILE" ] && [ -f "$KEY_FILE" ]; then
   }
 }
 EOF
-else
-  echo "No key file provided, setting up credential helper using instance metadata token"
+elif [ "$CLOUD" = "gcp" ]; then
+  echo "Setting up GCP credential helper for Artifact Registry"
 
-  sudo tee /usr/local/bin/gcp-registry-auth.sh > /dev/null << 'HELPER'
+  sudo tee /usr/local/bin/freedb-registry-auth.sh > /dev/null << 'HELPER'
 #!/bin/bash
 # Credential helper for GCP Artifact Registry
-# Returns a fresh access token from the instance metadata server
-TOKEN=$(curl -s -H "Metadata-Flavor: Google" \
+# Outputs a valid auth.json — falls back to empty auths if token fetch fails
+TOKEN=$(curl -sf -H "Metadata-Flavor: Google" \
   http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token \
-  | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
-AUTH=$(echo -n "oauth2accesstoken:${TOKEN}" | base64 -w0)
-cat << AUTHEOF
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])" 2>/dev/null || echo "")
+
+if [ -n "$TOKEN" ]; then
+  AUTH=$(echo -n "oauth2accesstoken:${TOKEN}" | base64 -w0)
+  cat << AUTHEOF
 {
   "auths": {
     "us-central1-docker.pkg.dev": {
@@ -100,19 +109,22 @@ cat << AUTHEOF
   }
 }
 AUTHEOF
+else
+  echo '{"auths": {}}'
+fi
 HELPER
-  sudo chmod +x /usr/local/bin/gcp-registry-auth.sh
+  sudo chmod +x /usr/local/bin/freedb-registry-auth.sh
 
-  sudo -u incus /usr/local/bin/gcp-registry-auth.sh > /tmp/auth.json
-  sudo -u incus cp /tmp/auth.json /home/incus/.config/containers/auth.json
-  rm -f /tmp/auth.json
+  /usr/local/bin/freedb-registry-auth.sh | sudo -u incus tee /home/incus/.config/containers/auth.json > /dev/null
 
   # Refresh the token every 45 minutes (expires every hour)
-  CRON_LINE="*/45 * * * * /usr/local/bin/gcp-registry-auth.sh > /home/incus/.config/containers/auth.json"
-  EXISTING=$(sudo -u incus crontab -l 2>/dev/null | grep -v gcp-registry-auth || true)
+  CRON_LINE="*/45 * * * * /usr/local/bin/freedb-registry-auth.sh > /home/incus/.config/containers/auth.json 2>/dev/null"
+  EXISTING=$(sudo -u incus crontab -l 2>/dev/null | grep -v freedb-registry-auth || true)
   echo "${EXISTING:+$EXISTING
 }${CRON_LINE}" | sudo -u incus crontab -
   echo "Credential helper installed with 45-minute token refresh cron"
+else
+  echo "No private registry auth needed — using empty auth.json for public registries"
 fi
 
 # ============================================================================
