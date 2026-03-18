@@ -4,6 +4,24 @@
 
 A Go + Bubbletea terminal UI that runs on the FreeDB host and provides a single interface for managing app deployments. It abstracts away Incus, Traefik routing, and database provisioning so deploying a new app doesn't require remembering how the platform works.
 
+## Operational Model
+
+The TUI is a **foreground tool** — SSH in, run `freedb`, do what you need, quit. It's not a daemon and doesn't need to stay running. This keeps the design simple and avoids the need for tmux/screen.
+
+A separate **metrics collector** runs as a systemd timer in the background. It scrapes Traefik's Prometheus endpoint once daily and appends to a metrics history file. When the TUI starts, it reads the history file to populate the "Today" and "7d avg" traffic columns immediately — no warm-up period needed.
+
+```
+┌──────────────────────────┐     ┌──────────────────────────────┐
+│  freedb (foreground TUI) │     │  freedb-metrics (background) │
+│                          │     │                              │
+│  Reads on startup:       │     │  Runs via systemd timer      │
+│  - Incus API (live)      │     │  (daily at midnight)         │
+│  - Traefik metrics (live)│     │                              │
+│  - metrics-history.json  │     │  Scrapes Traefik prometheus  │
+│                          │     │  Writes metrics-history.json │
+└──────────────────────────┘     └──────────────────────────────┘
+```
+
 ## Architecture
 
 ```
@@ -145,22 +163,48 @@ Same template works for container apps (Incus bridge IP) and VM apps (VPC subnet
 ### Dashboard
 
 ```
-┌─ FreeDB ──────────────────────────────────────────────────────┐
-│                                                                │
-│  Name          Type       Status    Domain              Mem    │
-│  ─────────────────────────────────────────────────────────────│
-│  proxy1        system     RUNNING   —                   64MB   │
-│  db1           system     RUNNING   —                   256MB  │
-│  myapp         container  RUNNING   myapp.example.com   128MB  │
-│  ml-pipeline   vm         STOPPED   ml.example.com      —      │
-│                                                                │
-│  [a] Add App  [enter] Manage  [q] Quit     Refreshed 2s ago   │
-└────────────────────────────────────────────────────────────────┘
+┌─ FreeDB ─────────────────────────────────────────────────────────────┐
+│                                                                       │
+│  Name          Status    Domain              Mem     Today   7d avg   │
+│  ────────────────────────────────────────────────────────────────────│
+│  proxy1        RUNNING   —                   64MB    —       —        │
+│  db1           RUNNING   —                   256MB   —       —        │
+│▸ myapp         RUNNING   myapp.example.com   128MB   47 req  32/day  │
+│  ml-pipeline   STOPPED   ml.example.com      —       0       8/day   │
+│                                                                       │
+│  [a] Add App  [enter] Manage  [q] Quit              Refreshed 2s ago │
+└───────────────────────────────────────────────────────────────────────┘
 ```
 
 - Refreshes every 5 seconds via `tea.Tick`
 - Container stats from Incus API (`GetInstanceState`)
 - VM stats from cloud provider API (cached, refreshed less frequently)
+- Traffic columns ("Today", "7d avg") from Traefik Prometheus metrics + daily snapshots
+- System containers (proxy1, db1) shown but not manageable through app workflows
+
+### App Detail View
+
+Shown when selecting an app with Enter. Full traffic breakdown alongside management actions.
+
+```
+┌─ myapp ──────────────────────────────────────────────────────────────┐
+│                                                                       │
+│  Status: RUNNING          Domain: myapp.example.com                   │
+│  Type:   container        IP:     10.0.0.42                           │
+│  Image:  gcr:proj/myapp   Port:   8080                                │
+│  DB:     myapp            Mem:    128MB                                │
+│                                                                       │
+│  Traffic (last 7 days)                                                │
+│  ─────────────────────────────────────────────                        │
+│  Today:       47 requests    0 errors                                 │
+│  Yesterday:   31 requests    1 error (3.2%)                           │
+│  7-day avg:   32 req/day                                              │
+│  7-day peak:  89 requests (Mar 14)                                    │
+│  Bandwidth:   12.4 MB in / 156 MB out (7d total)                     │
+│                                                                       │
+│  [s] Stop  [r] Restart  [l] Logs  [d] Delete  [esc] Back             │
+└───────────────────────────────────────────────────────────────────────┘
+```
 
 ### Add App Wizard
 
@@ -204,7 +248,9 @@ Delete shows a confirmation dialog and cleans up: container/VM, Traefik route, o
 ```
 tui/
   go.mod
-  main.go
+  main.go                            # TUI entry point
+  cmd/
+    metrics-collector/main.go        # Background metrics collector (systemd timer)
   internal/
     config/config.go
     registry/
@@ -222,6 +268,8 @@ tui/
     traefik/
       routes.go
       template.go          # embedded YAML template
+      metrics.go           # scrape and parse Prometheus metrics from proxy1
+      history.go           # daily snapshot persistence and 7-day aggregation
     db/
       postgres.go
     tui/
@@ -249,6 +297,7 @@ github.com/charmbracelet/bubbletea  # TUI framework
 github.com/charmbracelet/bubbles    # Table, textinput, viewport, spinner
 github.com/charmbracelet/lipgloss   # Styling
 github.com/lib/pq                   # PostgreSQL driver
+github.com/prometheus/common        # Prometheus metrics text format parser
 cloud.google.com/go/compute         # GCP Compute Engine SDK
 golang.org/x/crypto/ssh             # SSH for VM setup
 ```
@@ -273,14 +322,30 @@ golang.org/x/crypto/ssh             # SSH for VM setup
 - Delete with full cleanup (container, route, DB, registry)
 - **Milestone:** Full container app lifecycle through TUI
 
-### Phase 4: VM Apps + Cloud Provider
+### Phase 4: Traffic Metrics Dashboard
+- Scrape Traefik's Prometheus metrics endpoint (`http://proxy1:8080/metrics`)
+- Parse Prometheus text format (lightweight parser or `github.com/prometheus/common/expfmt`)
+- Daily snapshot persistence to `/etc/freedb/metrics-history.json`:
+  - TUI writes a snapshot on first run each day (or via a lightweight cron)
+  - Stores daily totals per app: requests, errors, bytes in/out
+  - Retains 30 days, auto-prunes older entries
+- Dashboard columns:
+  - **Today** — requests since midnight (current counter minus last midnight snapshot)
+  - **7d avg** — average daily requests over last 7 days (from snapshot history)
+- App detail view (shown on Enter) with full breakdown:
+  - Per-day request count and error rate for last 7 days
+  - 7-day peak day
+  - Total bandwidth in/out
+- **Milestone:** Dashboard shows daily traffic KPIs per app; detail view shows 7-day history
+
+### Phase 5: VM Apps + Cloud Provider
 - CloudProvider interface with GCP implementation
 - Add-app wizard VM path (provision via Compute Engine API)
 - VM management (start/stop/delete via cloud API)
 - AWS stub
 - **Milestone:** Provision a VM-based app via TUI with Traefik routing
 
-### Phase 5: Polish
+### Phase 6: Polish
 - Error handling and graceful degradation
 - `--check` flag for environment validation
 - Makefile with build/install/test targets
