@@ -31,8 +31,15 @@ var (
 			Foreground(lipgloss.Color("9"))
 )
 
+type containerData struct {
+	info       incus.ContainerInfo
+	domain     string
+	image      string
+	isApp      bool
+}
+
 type refreshMsg struct {
-	rows        []table.Row
+	containers  []containerData
 	cpuReadings map[string]float64
 	metrics     map[string]*traefik.ServiceMetrics
 	err         error
@@ -136,7 +143,48 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
-			m.table.SetRows(msg.rows)
+			// Build rows with latest cpuPercent
+			var rows []table.Row
+			for _, cd := range msg.containers {
+				mem := "—"
+				if cd.info.MemUsageMB > 0 {
+					mem = fmt.Sprintf("%dMB", cd.info.MemUsageMB)
+				}
+
+				cpu := "—"
+				if pct, ok := m.cpuPercent[cd.info.Name]; ok && cd.info.Status == "RUNNING" {
+					if pct < 0.1 {
+						cpu = "<0.1%"
+					} else {
+						cpu = fmt.Sprintf("%.1f%%", pct)
+					}
+				}
+
+				today := "—"
+				avg7d := "—"
+				if msg.metrics != nil && m.history != nil {
+					todayReqs := m.history.TodayRequests(cd.info.Name, msg.metrics)
+					if todayReqs > 0 {
+						today = formatReqs(todayReqs)
+					}
+					avgReqs := m.history.AvgDailyRequests(cd.info.Name, 7)
+					if avgReqs > 0 {
+						avg7d = formatReqs(avgReqs)
+					}
+				}
+
+				rows = append(rows, table.Row{
+					cd.info.Name,
+					cd.info.Status,
+					cd.image,
+					cd.domain,
+					mem,
+					cpu,
+					today,
+					avg7d,
+				})
+			}
+			m.table.SetRows(rows)
 		}
 		m.lastRefresh = now
 		return m, nil
@@ -204,15 +252,13 @@ func (m Model) tick() tea.Cmd {
 }
 
 func (m Model) refresh() tea.Cmd {
-	cpuPercent := m.cpuPercent
-	history := m.history
 	return func() tea.Msg {
 		containers, err := m.incusClient.ListContainers(context.Background())
 		if err != nil {
 			return refreshMsg{err: err}
 		}
 
-		// Fetch Traefik metrics (best effort — don't fail if unavailable)
+		// Fetch Traefik metrics (best effort)
 		metrics, _ := traefik.FetchMetrics(m.incusClient, m.cfg.ProxyContainer)
 
 		systemContainers := map[string]bool{
@@ -225,8 +271,8 @@ func (m Model) refresh() tea.Cmd {
 			registeredApps[app.Name] = app
 		}
 
-		var rows []table.Row
 		cpuReadings := make(map[string]float64)
+		var data []containerData
 
 		// Sort: system containers first, then apps alphabetically
 		sort.Slice(containers, func(i, j int) bool {
@@ -241,9 +287,10 @@ func (m Model) refresh() tea.Cmd {
 		for _, c := range containers {
 			domain := "—"
 			image := "—"
+			isApp := false
 			if app, ok := registeredApps[c.Name]; ok {
+				isApp = true
 				domain = app.Domain
-				// Show short image name (strip registry prefix, keep tag)
 				img := app.Image
 				if parts := strings.Split(img, "/"); len(parts) > 1 {
 					img = parts[len(parts)-1]
@@ -252,54 +299,22 @@ func (m Model) refresh() tea.Cmd {
 					image = img
 				}
 
-				// IP drift detection: if IP changed, update route and registry
+				// IP drift detection
 				if c.IP != "" && c.IP != app.LastIP && app.Domain != "" {
 					_ = traefik.PushRoute(m.incusClient, app.Name, app.Domain, c.IP, app.Port, app.TLS)
 					_ = m.registry.UpdateIP(app.Name, c.IP)
 				}
 			}
 
-			mem := "—"
-			if c.MemUsageMB > 0 {
-				mem = fmt.Sprintf("%dMB", c.MemUsageMB)
-			}
-
 			cpuReadings[c.Name] = c.CPUSeconds
-			cpu := "—"
-			if _, ok := cpuPercent[c.Name]; ok && c.Status == "RUNNING" {
-				pct := cpuPercent[c.Name]
-				if pct < 0.1 {
-					cpu = "<0.1%"
-				} else {
-					cpu = fmt.Sprintf("%.1f%%", pct)
-				}
-			}
-
-			today := "—"
-			avg7d := "—"
-			if metrics != nil && history != nil {
-				todayReqs := history.TodayRequests(c.Name, metrics)
-				if todayReqs > 0 {
-					today = formatReqs(todayReqs)
-				}
-				avgReqs := history.AvgDailyRequests(c.Name, 7)
-				if avgReqs > 0 {
-					avg7d = formatReqs(avgReqs)
-				}
-			}
-
-			rows = append(rows, table.Row{
-				c.Name,
-				c.Status,
-				image,
-				domain,
-				mem,
-				cpu,
-				today,
-				avg7d,
+			data = append(data, containerData{
+				info:   c,
+				domain: domain,
+				image:  image,
+				isApp:  isApp,
 			})
 		}
 
-		return refreshMsg{rows: rows, cpuReadings: cpuReadings, metrics: metrics}
+		return refreshMsg{containers: data, cpuReadings: cpuReadings, metrics: metrics}
 	}
 }
