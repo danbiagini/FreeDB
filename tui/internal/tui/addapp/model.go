@@ -27,7 +27,6 @@ const (
 	stepImage
 	stepDomain
 	stepPort
-	stepAdvanced // toggle to show advanced options
 	stepTLS
 	stepDB
 	stepConfirm
@@ -44,7 +43,6 @@ type Model struct {
 	inputs      []textinput.Model
 	needsDB     bool
 	tls         bool
-	advanced    bool
 	incusClient *incus.Client
 	registry    *registry.AppRegistry
 	cfg         *config.Config
@@ -104,13 +102,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cancelled = true
 			m.done = true
 			return m, nil
-
-		case "tab":
-			if m.step == stepAdvanced {
-				m.advanced = true
-				m.step = stepTLS
-				return m, nil
-			}
 
 		case "y", "n":
 			if m.step == stepTLS {
@@ -188,12 +179,7 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 
 	case stepPort:
 		m.err = nil
-		m.step = stepAdvanced
-		return m, nil
-
-	case stepAdvanced:
-		// Enter skips advanced, go straight to confirm with defaults
-		m.step = stepConfirm
+		m.step = stepTLS
 		return m, nil
 
 	case stepTLS:
@@ -246,18 +232,8 @@ func (m Model) View() string {
 		}
 	}
 
-	// Advanced options toggle
-	if m.step == stepAdvanced {
-		domain := m.inputs[2].Value()
-		b.WriteString("\n")
-		b.WriteString(dimStyle.Render(fmt.Sprintf("  External: https://%s (port 443, TLS via Let's Encrypt)", domain)))
-		b.WriteString("\n\n")
-		b.WriteString("  [tab] Advanced options  [enter] Deploy with defaults  [esc] Cancel\n")
-		return b.String()
-	}
-
-	// Show advanced options if expanded
-	if m.advanced && m.step >= stepTLS {
+	// TLS option
+	if m.step >= stepTLS && m.step < stepDeploying {
 		if m.step == stepTLS {
 			b.WriteString(fmt.Sprintf("\n  %s [y/n] ", labelStyle.Render("TLS (Let's Encrypt):")))
 		} else {
@@ -317,7 +293,7 @@ func (m Model) View() string {
 		b.WriteString("\n" + errStyle.Render(fmt.Sprintf("  %v", m.err)))
 	}
 
-	if m.step != stepAdvanced {
+	if m.step < stepDeploying {
 		b.WriteString(dimStyle.Render("\n\n  [esc] Cancel"))
 	}
 
