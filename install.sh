@@ -1,10 +1,4 @@
 #!/bin/bash
-set -euo pipefail
-
-# Close stdin to prevent commands from accidentally reading the curl pipe
-# when run via: curl ... | bash
-exec < /dev/null
-
 # FreeDB bootstrap installer
 # Usage: curl -fsSL https://raw.githubusercontent.com/danbiagini/FreeDB/main/install.sh | bash
 #
@@ -14,6 +8,11 @@ exec < /dev/null
 #
 # The installer saves progress to a marker file so it can resume after
 # a reboot (required for ZFS kernel module). Just re-run the same command.
+
+# Wrap in a function so bash reads the entire script before executing.
+# This prevents curl | bash from feeding script content to child processes via stdin.
+main() {
+set -euo pipefail
 
 BRANCH="${FREEDB_BRANCH:-main}"
 INSTALL_DIR="${FREEDB_DIR:-$HOME/FreeDB}"
@@ -25,7 +24,6 @@ LOG_FILE="${LOG_DIR}/install-$(date +%Y%m%d-%H%M%S).log"
 # Log all output to file while still showing on terminal
 sudo mkdir -p "$LOG_DIR"
 exec > >(sudo tee -a "$LOG_FILE") 2>&1
-echo "Install log: $LOG_FILE"
 
 echo "=============================="
 echo " FreeDB Installer"
@@ -33,6 +31,7 @@ echo "=============================="
 echo ""
 echo "Branch:    $BRANCH"
 echo "Directory: $INSTALL_DIR"
+echo "Log:       $LOG_FILE"
 echo ""
 
 # Install git if not present
@@ -100,3 +99,8 @@ echo ""
 echo "To deploy an app, use the deploy helper:"
 echo "  sudo -u incus /home/incus/deploy/deploy-container.sh <name> <remote> <image:tag>"
 echo ""
+}
+
+# Run main — the function wrapper ensures bash reads the entire script
+# before executing, which is critical for curl | bash usage
+main "$@"
