@@ -153,7 +153,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 
 				cpu := "—"
-				if pct, ok := m.cpuPercent[cd.info.Name]; ok && cd.info.Status == "RUNNING" {
+				if pct, ok := m.cpuPercent[cd.info.Name]; ok && strings.EqualFold(cd.info.Status, "running") {
 					if pct < 0.1 {
 						cpu = "<0.1%"
 					} else {
