@@ -11,7 +11,11 @@ TRAEFIK_CONFIG_PATH="${CONFIG_DIR}/traefik.toml"
 
 TRAEFIK_VERSION="${TRAEFIK_VERSION:-3.6.10}"
 
-sudo incus launch images:debian/12/cloud proxy1
+if sudo incus info proxy1 &>/dev/null; then
+  echo "proxy1 already exists, skipping launch"
+else
+  sudo incus launch images:debian/12/cloud proxy1
+fi
 
 # Force apt to use IPv4 (IPv6 is disabled on the incus bridge but containers may still try it)
 sudo incus exec proxy1 -- sh -c 'echo "Acquire::ForceIPv4 \"true\";" > /etc/apt/apt.conf.d/99force-ipv4'

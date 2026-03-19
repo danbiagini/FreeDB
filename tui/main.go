@@ -12,12 +12,20 @@ import (
 	"github.com/danbiagini/freedb-tui/internal/tui"
 )
 
+var version = "dev"
+
 func main() {
+	if len(os.Args) > 1 && (os.Args[1] == "--version" || os.Args[1] == "-v") {
+		fmt.Printf("freedb %s\n", version)
+		os.Exit(0)
+	}
+
 	cfg, err := config.Load()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
 		os.Exit(1)
 	}
+	cfg.Version = version
 
 	ic, err := incus.Connect(cfg.IncusSocket)
 	if err != nil {
