@@ -68,9 +68,8 @@ func NewModel(ic *incus.Client, reg *registry.AppRegistry, cfg *config.Config) M
 		{Title: "Domain", Width: 20},
 		{Title: "Mem", Width: 7},
 		{Title: "CPU", Width: 6},
-		{Title: "Today", Width: 7},
+		{Title: "Reqs", Width: 7},
 		{Title: "Err%", Width: 5},
-		{Title: "7d avg", Width: 7},
 	}
 
 	t := table.New(
@@ -162,28 +161,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 
-				today := "—"
+				reqs := "—"
 				errPct := "—"
-				avg7d := "—"
 				if msg.metrics != nil {
 					if sm, ok := msg.metrics[cd.info.Name]; ok && sm.TotalReqs > 0 {
-						if m.history != nil {
-							todayReqs := m.history.TodayRequests(cd.info.Name, msg.metrics)
-							if todayReqs > 0 {
-								today = formatReqs(todayReqs)
-							}
-						}
+						reqs = formatReqs(sm.TotalReqs)
 						pct := (sm.ErrorReqs / sm.TotalReqs) * 100
 						if pct > 0 {
 							errPct = fmt.Sprintf("%.1f", pct)
 						} else {
 							errPct = "0"
-						}
-					}
-					if m.history != nil {
-						avgReqs := m.history.AvgDailyRequests(cd.info.Name, 7)
-						if avgReqs > 0 {
-							avg7d = formatReqs(avgReqs)
 						}
 					}
 				}
@@ -195,9 +182,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					cd.domain,
 					mem,
 					cpu,
-					today,
+					reqs,
 					errPct,
-					avg7d,
 				})
 			}
 			m.table.SetRows(rows)
