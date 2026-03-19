@@ -344,9 +344,26 @@ func (m Model) deploy() tea.Cmd {
 		ctx := context.Background()
 
 		// Launch container — detect OCI vs Linux container image
+		// OCI if: has a registry domain (.io, .com, .dev), or uses remote:image format
+		// where the remote is a configured OCI remote
 		isOCI := strings.Contains(image, "docker.io") ||
 			strings.Contains(image, ".io/") ||
-			strings.Contains(image, ".com/")
+			strings.Contains(image, ".com/") ||
+			strings.Contains(image, ".dev/")
+		if !isOCI && strings.Contains(image, ":") {
+			parts := strings.SplitN(image, ":", 2)
+			if !strings.Contains(parts[0], ".") && !strings.Contains(parts[0], "/") {
+				// Looks like "remote:alias" — check if it's a known OCI remote
+				if remotes, err := ic.ListRemotes(); err == nil {
+					for _, r := range remotes {
+						if r.Name == parts[0] {
+							isOCI = true
+							break
+						}
+					}
+				}
+			}
+		}
 		if isOCI {
 			if err := ic.LaunchOCI(ctx, name, image); err != nil {
 				return deployResult{err: fmt.Errorf("launching OCI container: %w", err)}
