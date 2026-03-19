@@ -56,6 +56,7 @@ type Model struct {
 	cpuPercent  map[string]float64 // computed CPU % per container
 	history     *traefik.MetricsHistory
 	curMetrics  map[string]*traefik.ServiceMetrics
+	showVersion bool
 	err         error
 }
 
@@ -196,6 +197,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "r":
 			return m, m.refresh()
+		case "v":
+			m.showVersion = !m.showVersion
+			return m, nil
 		}
 	}
 
@@ -218,8 +222,13 @@ func (m Model) View() string {
 		b.WriteString("\n")
 	}
 
+	if m.showVersion {
+		b.WriteString(helpStyle.Render(fmt.Sprintf("  Version: %s", m.cfg.Version)))
+		b.WriteString("\n")
+	}
+
 	ago := time.Since(m.lastRefresh).Truncate(time.Second)
-	help := fmt.Sprintf("[a] Add App  [enter] Manage  [r] Refresh  [q] Quit  Refreshed %s ago", ago)
+	help := fmt.Sprintf("[a] Add App  [enter] Manage  [v] Version  [r] Refresh  [q] Quit  Refreshed %s ago", ago)
 	b.WriteString(helpStyle.Render(help))
 
 	return b.String()

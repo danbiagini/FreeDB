@@ -11,6 +11,7 @@ type Config struct {
 	ProxyContainer string `json:"proxy_container"`
 	DBContainer    string `json:"db_container"`
 	IncusSocket    string `json:"incus_socket"`
+	Version        string `json:"-"`
 }
 
 func DefaultConfig() *Config {
