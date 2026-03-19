@@ -56,6 +56,7 @@ type Model struct {
 	cpuPercent  map[string]float64 // computed CPU % per container
 	history     *traefik.MetricsHistory
 	curMetrics  map[string]*traefik.ServiceMetrics
+	hostInfo    *config.HostInfo
 	showVersion bool
 	err         error
 }
@@ -92,6 +93,7 @@ func NewModel(ic *incus.Client, reg *registry.AppRegistry, cfg *config.Config) M
 
 	histPath := "/etc/freedb/metrics-history.json"
 	history, _ := traefik.LoadHistory(histPath)
+	hostInfo := config.GetHostInfo()
 
 	return Model{
 		table:       t,
@@ -99,6 +101,7 @@ func NewModel(ic *incus.Client, reg *registry.AppRegistry, cfg *config.Config) M
 		registry:    reg,
 		cfg:         cfg,
 		history:     history,
+		hostInfo:    hostInfo,
 	}
 }
 
@@ -213,6 +216,10 @@ func (m Model) View() string {
 	var b strings.Builder
 
 	b.WriteString(titleStyle.Render("FreeDB"))
+	if m.hostInfo != nil {
+		b.WriteString("  ")
+		b.WriteString(helpStyle.Render(m.hostInfo.String()))
+	}
 	b.WriteString("\n")
 
 	b.WriteString(m.table.View())
