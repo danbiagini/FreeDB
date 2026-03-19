@@ -29,6 +29,7 @@ const (
 	stepPort
 	stepTLS
 	stepDB
+	stepDBEnvVar
 	stepConfirm
 	stepDeploying
 	stepDone
@@ -53,7 +54,7 @@ type Model struct {
 }
 
 func NewModel(ic *incus.Client, reg *registry.AppRegistry, cfg *config.Config) Model {
-	inputs := make([]textinput.Model, 4)
+	inputs := make([]textinput.Model, 5)
 
 	inputs[0] = textinput.New()
 	inputs[0].Placeholder = "myapp"
@@ -71,6 +72,10 @@ func NewModel(ic *incus.Client, reg *registry.AppRegistry, cfg *config.Config) M
 	inputs[3] = textinput.New()
 	inputs[3].Placeholder = "8080"
 	inputs[3].CharLimit = 5
+
+	inputs[4] = textinput.New()
+	inputs[4].Placeholder = "DATABASE_URL"
+	inputs[4].CharLimit = 50
 
 	return Model{
 		step:        stepName,
@@ -111,6 +116,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if m.step == stepDB {
 				m.needsDB = msg.String() == "y"
+				if m.needsDB {
+					m.step = stepDBEnvVar
+					m.inputs[4].SetValue("DATABASE_URL")
+					m.inputs[4].Focus()
+					return m, nil
+				}
 				m.step = stepConfirm
 				return m, nil
 			}
@@ -129,9 +140,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	if m.step <= stepPort {
+	if m.step <= stepPort || m.step == stepDBEnvVar {
 		var cmd tea.Cmd
 		idx := int(m.step)
+		if m.step == stepDBEnvVar {
+			idx = 4
+		}
 		m.inputs[idx], cmd = m.inputs[idx].Update(msg)
 		return m, cmd
 	}
@@ -186,6 +200,11 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case stepDB:
+		return m, nil
+
+	case stepDBEnvVar:
+		m.err = nil
+		m.step = stepConfirm
 		return m, nil
 
 	case stepConfirm:
@@ -258,6 +277,15 @@ func (m Model) View() string {
 		}
 	}
 
+	// DB env var name
+	if m.needsDB && m.step >= stepDBEnvVar && m.step < stepDeploying {
+		if m.step == stepDBEnvVar {
+			b.WriteString(fmt.Sprintf("  %s %s\n", labelStyle.Render("DB env var:"), m.inputs[4].View()))
+		} else {
+			b.WriteString(fmt.Sprintf("  %s %s\n", labelStyle.Render("DB env var:"), m.inputs[4].Value()))
+		}
+	}
+
 	// External access summary
 	if m.step == stepConfirm {
 		domain := m.inputs[2].Value()
@@ -306,6 +334,10 @@ func (m Model) deploy() tea.Cmd {
 	domain := strings.TrimSpace(m.inputs[2].Value())
 	portStr := strings.TrimSpace(m.inputs[3].Value())
 	needsDB := m.needsDB
+	dbEnvVar := strings.TrimSpace(m.inputs[4].Value())
+	if dbEnvVar == "" {
+		dbEnvVar = "DATABASE_URL"
+	}
 	tls := m.tls
 
 	port := 8080
@@ -368,6 +400,18 @@ func (m Model) deploy() tea.Cmd {
 			if err := db.CreateDatabase(ctx, ic, name); err != nil {
 				return deployResult{err: fmt.Errorf("creating database: %w", err)}
 			}
+
+			// Get db1 IP for connection string
+			dbIP, err := ic.GetContainerIP(ctx, "db1")
+			if err != nil {
+				dbIP = "db1.incus" // fallback to DNS
+			}
+			connStr := db.GetDBConnectionString(dbIP, name)
+
+			// Inject DATABASE_URL env var into the container
+			if err := ic.SetEnvVar(ctx, name, dbEnvVar, connStr); err != nil {
+				return deployResult{err: fmt.Errorf("setting %s: %w", dbEnvVar, err)}
+			}
 		}
 
 		// Save to registry
@@ -381,6 +425,7 @@ func (m Model) deploy() tea.Cmd {
 			HasDB:     needsDB,
 			DBName:    dbName,
 			DBUser:    dbName,
+			DBEnvVar:  dbEnvVar,
 			LastIP:    ip,
 			CreatedAt: time.Now(),
 		}

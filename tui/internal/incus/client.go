@@ -195,6 +195,24 @@ func (c *Client) DeleteContainer(ctx context.Context, name string) error {
 	return op.Wait()
 }
 
+func (c *Client) SetEnvVar(ctx context.Context, name, key, value string) error {
+	inst, etag, err := c.conn.GetInstance(name)
+	if err != nil {
+		return fmt.Errorf("getting instance %s: %w", name, err)
+	}
+
+	if inst.Config == nil {
+		inst.Config = make(map[string]string)
+	}
+	inst.Config["environment."+key] = value
+
+	op, err := c.conn.UpdateInstance(name, inst.Writable(), etag)
+	if err != nil {
+		return fmt.Errorf("updating instance %s: %w", name, err)
+	}
+	return op.Wait()
+}
+
 func (c *Client) PushFile(instance, path string, content []byte) error {
 	return c.conn.CreateInstanceFile(instance, path, incusclient.InstanceFileArgs{
 		Content:   bytes.NewReader(content),

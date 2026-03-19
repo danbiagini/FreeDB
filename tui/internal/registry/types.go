@@ -19,6 +19,7 @@ type App struct {
 	HasDB     bool              `json:"has_db"`
 	DBName    string            `json:"db_name,omitempty"`
 	DBUser    string            `json:"db_user,omitempty"`
+	DBEnvVar  string            `json:"db_env_var,omitempty"`
 	EnvVars   map[string]string `json:"env_vars,omitempty"`
 	LastIP    string            `json:"last_ip"`
 	CloudID   string            `json:"cloud_id,omitempty"`
