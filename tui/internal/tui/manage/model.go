@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -247,7 +248,9 @@ func (m Model) View() string {
 		if d.DiskUsageMB > 0 {
 			b.WriteString(fmt.Sprintf("  Disk:    %d MB\n", d.DiskUsageMB))
 		}
-		b.WriteString(fmt.Sprintf("  CPU:     %.1f seconds\n", d.CPUSeconds))
+		if d.Uptime > 0 {
+			b.WriteString(fmt.Sprintf("  Uptime:  %s\n", formatDuration(d.Uptime)))
+		}
 		if d.Processes > 0 {
 			b.WriteString(fmt.Sprintf("  Procs:   %d\n", d.Processes))
 		}
@@ -301,6 +304,19 @@ func (m Model) View() string {
 	}
 
 	return b.String()
+}
+
+func formatDuration(d time.Duration) string {
+	days := int(d.Hours()) / 24
+	hours := int(d.Hours()) % 24
+	mins := int(d.Minutes()) % 60
+	if days > 0 {
+		return fmt.Sprintf("%dd %dh %dm", days, hours, mins)
+	}
+	if hours > 0 {
+		return fmt.Sprintf("%dh %dm", hours, mins)
+	}
+	return fmt.Sprintf("%dm", mins)
 }
 
 func formatBytes(b int64) string {
