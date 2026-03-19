@@ -229,7 +229,7 @@ func (m Model) View() string {
 	}
 
 	ago := time.Since(m.lastRefresh).Truncate(time.Second)
-	help := fmt.Sprintf("[a] Add App  [enter] Manage  [v] Version  [r] Refresh  [q] Quit  Refreshed %s ago", ago)
+	help := fmt.Sprintf("[a] Add App  [enter] Manage  [R] Registries  [v] Version  [q] Quit  %s ago", ago)
 	b.WriteString(helpStyle.Render(help))
 
 	return b.String()

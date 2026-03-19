@@ -9,6 +9,7 @@ import (
 	"github.com/danbiagini/freedb-tui/internal/tui/addapp"
 	"github.com/danbiagini/freedb-tui/internal/tui/dashboard"
 	"github.com/danbiagini/freedb-tui/internal/tui/manage"
+	"github.com/danbiagini/freedb-tui/internal/tui/remotes"
 )
 
 type view int
@@ -17,6 +18,7 @@ const (
 	viewDashboard view = iota
 	viewAddApp
 	viewManageApp
+	viewRemotes
 )
 
 type Model struct {
@@ -27,6 +29,7 @@ type Model struct {
 	dashboard dashboard.Model
 	addApp    *addapp.Model
 	manage    *manage.Model
+	remotes   *remotes.Model
 	width     int
 	height    int
 }
@@ -59,6 +62,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateAddApp(msg)
 	case viewManageApp:
 		return m.updateManage(msg)
+	case viewRemotes:
+		return m.updateRemotes(msg)
 	}
 
 	return m, nil
@@ -74,6 +79,11 @@ func (m Model) updateDashboard(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.addApp = &aa
 			m.current = viewAddApp
 			return m, aa.Init()
+		case "R":
+			rm := remotes.NewModel(m.incus)
+			m.remotes = &rm
+			m.current = viewRemotes
+			return m, rm.Init()
 		case "enter":
 			selected := m.dashboard.SelectedApp()
 			if selected != "" {
@@ -130,6 +140,25 @@ func (m Model) updateManage(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+func (m Model) updateRemotes(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if m.remotes == nil {
+		m.current = viewDashboard
+		return m, nil
+	}
+
+	updated, cmd := m.remotes.Update(msg)
+	rm := updated.(remotes.Model)
+	m.remotes = &rm
+
+	if rm.Done() {
+		m.current = viewDashboard
+		m.remotes = nil
+		return m, m.dashboard.Init()
+	}
+
+	return m, cmd
+}
+
 func (m Model) View() string {
 	switch m.current {
 	case viewAddApp:
@@ -139,6 +168,10 @@ func (m Model) View() string {
 	case viewManageApp:
 		if m.manage != nil {
 			return m.manage.View()
+		}
+	case viewRemotes:
+		if m.remotes != nil {
+			return m.remotes.View()
 		}
 	}
 	return m.dashboard.View()
