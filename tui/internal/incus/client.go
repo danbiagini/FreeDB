@@ -256,22 +256,49 @@ func (c *Client) LaunchContainer(ctx context.Context, name, image string) error 
 	return c.StartContainer(ctx, name)
 }
 
-// LaunchOCI launches a container from an OCI image using incus remotes.
-// imageRef examples: "docker.io/traefik/whoami", "traefik/whoami", "docker:traefik/whoami"
-func (c *Client) LaunchOCI(ctx context.Context, name, imageRef string) error {
-	remote := "docker"
-	alias := imageRef
-
+// parseImageRef resolves an image reference to a remote name and alias.
+// Supports formats:
+//   - "gcr:project/repo/image:tag"                            → remote=gcr, alias=project/repo/image:tag
+//   - "docker.io/traefik/whoami"                              → remote=docker, alias=traefik/whoami
+//   - "us-central1-docker.pkg.dev/project/repo/image:tag"     → remote matching that addr, alias=project/repo/image:tag
+//   - "traefik/whoami"                                        → remote=docker, alias=traefik/whoami
+func parseImageRef(imageRef string) (string, string) {
+	// Format: "remote:image" (e.g., "gcr:project/repo/image:tag")
 	if strings.Contains(imageRef, ":") {
 		parts := strings.SplitN(imageRef, ":", 2)
 		if !strings.Contains(parts[0], ".") && !strings.Contains(parts[0], "/") {
-			remote = parts[0]
-			alias = parts[1]
+			return parts[0], parts[1]
 		}
 	}
 
-	// Strip docker.io/ prefix — use the "docker" remote instead
-	alias = strings.TrimPrefix(alias, "docker.io/")
+	// Format: "registry.host/path" — match against configured remotes
+	conf, err := cliconfig.LoadConfig("")
+	if err == nil {
+		for name, r := range conf.Remotes {
+			if r.Protocol != "oci" {
+				continue
+			}
+			host := strings.TrimPrefix(r.Addr, "https://")
+			host = strings.TrimPrefix(host, "http://")
+			if strings.HasPrefix(imageRef, host+"/") {
+				alias := strings.TrimPrefix(imageRef, host+"/")
+				return name, alias
+			}
+		}
+	}
+
+	// Default: strip docker.io/ prefix, use "docker" remote
+	alias := strings.TrimPrefix(imageRef, "docker.io/")
+	return "docker", alias
+}
+
+// LaunchOCI launches a container from an OCI image using incus remotes.
+// imageRef examples:
+//   - "docker.io/traefik/whoami"
+//   - "gcr:project/repo/image:tag"
+//   - "us-central1-docker.pkg.dev/project/repo/image:tag"
+func (c *Client) LaunchOCI(ctx context.Context, name, imageRef string) error {
+	remote, alias := parseImageRef(imageRef)
 
 	// Load incus client config to get remote server address
 	conf, err := cliconfig.LoadConfig("")
@@ -281,11 +308,9 @@ func (c *Client) LaunchOCI(ctx context.Context, name, imageRef string) error {
 
 	remoteConfig, ok := conf.Remotes[remote]
 	if !ok {
-		return fmt.Errorf("remote %q not found in incus config", remote)
+		return fmt.Errorf("remote %q not found in incus config — add it via [R] Registries", remote)
 	}
 
-	// Tell the server to pull directly from the OCI registry
-	// This matches what the CLI does: the server handles the pull via skopeo/umoci
 	req := api.InstancesPost{
 		Name:  name,
 		Type:  api.InstanceTypeContainer,
@@ -307,7 +332,6 @@ func (c *Client) LaunchOCI(ctx context.Context, name, imageRef string) error {
 		return fmt.Errorf("creating %s: %w", name, err)
 	}
 
-	// Instance already started via Start: true
 	return nil
 }
 
