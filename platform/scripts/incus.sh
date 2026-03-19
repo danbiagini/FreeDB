@@ -178,7 +178,7 @@ fi
 
 # Add artifact registry remote (GCP-specific, skip on other clouds)
 if [ "$CLOUD" = "gcp" ]; then
-  if sudo incus remote list | grep -q gcr; then
+  if sudo incus remote list -f csv | cut -d',' -f1 | grep -qx "gcr"; then
     echo "Remote 'gcr' already exists, skipping"
   else
     sudo incus remote add gcr https://us-central1-docker.pkg.dev --protocol=oci
@@ -186,7 +186,7 @@ if [ "$CLOUD" = "gcp" ]; then
 fi
 
 # Add Docker Hub remote for OCI images
-if sudo incus remote list | grep -q docker; then
+if sudo incus remote list -f csv | cut -d',' -f1 | grep -qx "docker"; then
   echo "Remote 'docker' already exists, skipping"
 else
   sudo incus remote add docker https://docker.io --protocol=oci

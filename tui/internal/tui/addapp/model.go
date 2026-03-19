@@ -27,9 +27,10 @@ const (
 	stepImage
 	stepDomain
 	stepPort
-	stepAdvanced // toggle to show advanced options
 	stepTLS
 	stepDB
+	stepDBEnvVar
+	stepEnvVars
 	stepConfirm
 	stepDeploying
 	stepDone
@@ -44,7 +45,8 @@ type Model struct {
 	inputs      []textinput.Model
 	needsDB     bool
 	tls         bool
-	advanced    bool
+	envVars     []string // accumulated KEY=VALUE entries
+	envInput    textinput.Model
 	incusClient *incus.Client
 	registry    *registry.AppRegistry
 	cfg         *config.Config
@@ -55,7 +57,7 @@ type Model struct {
 }
 
 func NewModel(ic *incus.Client, reg *registry.AppRegistry, cfg *config.Config) Model {
-	inputs := make([]textinput.Model, 4)
+	inputs := make([]textinput.Model, 5)
 
 	inputs[0] = textinput.New()
 	inputs[0].Placeholder = "myapp"
@@ -74,9 +76,18 @@ func NewModel(ic *incus.Client, reg *registry.AppRegistry, cfg *config.Config) M
 	inputs[3].Placeholder = "8080"
 	inputs[3].CharLimit = 5
 
+	inputs[4] = textinput.New()
+	inputs[4].Placeholder = "DATABASE_URL"
+	inputs[4].CharLimit = 50
+
+	envInput := textinput.New()
+	envInput.Placeholder = "KEY=VALUE (enter to add, empty to finish)"
+	envInput.CharLimit = 200
+
 	return Model{
 		step:        stepName,
 		inputs:      inputs,
+		envInput:    envInput,
 		tls:         true, // default: TLS enabled
 		incusClient: ic,
 		registry:    reg,
@@ -105,13 +116,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.done = true
 			return m, nil
 
-		case "tab":
-			if m.step == stepAdvanced {
-				m.advanced = true
-				m.step = stepTLS
-				return m, nil
-			}
-
 		case "y", "n":
 			if m.step == stepTLS {
 				m.tls = msg.String() == "y"
@@ -120,7 +124,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if m.step == stepDB {
 				m.needsDB = msg.String() == "y"
-				m.step = stepConfirm
+				if m.needsDB {
+					m.step = stepDBEnvVar
+					m.inputs[4].SetValue("DATABASE_URL")
+					m.inputs[4].Focus()
+					return m, nil
+				}
+				m.step = stepEnvVars
+				m.envInput.SetValue("")
+				m.envInput.Focus()
 				return m, nil
 			}
 
@@ -138,10 +150,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	if m.step <= stepPort {
+	if m.step <= stepPort || m.step == stepDBEnvVar {
 		var cmd tea.Cmd
 		idx := int(m.step)
+		if m.step == stepDBEnvVar {
+			idx = 4
+		}
 		m.inputs[idx], cmd = m.inputs[idx].Update(msg)
+		return m, cmd
+	}
+	if m.step == stepEnvVars {
+		var cmd tea.Cmd
+		m.envInput, cmd = m.envInput.Update(msg)
 		return m, cmd
 	}
 
@@ -188,18 +208,36 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 
 	case stepPort:
 		m.err = nil
-		m.step = stepAdvanced
-		return m, nil
-
-	case stepAdvanced:
-		// Enter skips advanced, go straight to confirm with defaults
-		m.step = stepConfirm
+		m.step = stepTLS
 		return m, nil
 
 	case stepTLS:
 		return m, nil
 
 	case stepDB:
+		return m, nil
+
+	case stepDBEnvVar:
+		m.err = nil
+		m.step = stepEnvVars
+		m.envInput.SetValue("")
+		m.envInput.Focus()
+		return m, nil
+
+	case stepEnvVars:
+		// Enter with empty value = done adding env vars
+		val := strings.TrimSpace(m.envInput.Value())
+		if val == "" {
+			m.step = stepConfirm
+			return m, nil
+		}
+		if !strings.Contains(val, "=") {
+			m.err = fmt.Errorf("format: KEY=VALUE")
+			return m, nil
+		}
+		m.err = nil
+		m.envVars = append(m.envVars, val)
+		m.envInput.SetValue("")
 		return m, nil
 
 	case stepConfirm:
@@ -246,18 +284,8 @@ func (m Model) View() string {
 		}
 	}
 
-	// Advanced options toggle
-	if m.step == stepAdvanced {
-		domain := m.inputs[2].Value()
-		b.WriteString("\n")
-		b.WriteString(dimStyle.Render(fmt.Sprintf("  External: https://%s (port 443, TLS via Let's Encrypt)", domain)))
-		b.WriteString("\n\n")
-		b.WriteString("  [tab] Advanced options  [enter] Deploy with defaults  [esc] Cancel\n")
-		return b.String()
-	}
-
-	// Show advanced options if expanded
-	if m.advanced && m.step >= stepTLS {
+	// TLS option
+	if m.step >= stepTLS && m.step < stepDeploying {
 		if m.step == stepTLS {
 			b.WriteString(fmt.Sprintf("\n  %s [y/n] ", labelStyle.Render("TLS (Let's Encrypt):")))
 		} else {
@@ -279,6 +307,30 @@ func (m Model) View() string {
 				dbStr = "yes"
 			}
 			b.WriteString(fmt.Sprintf("  %s %s\n", labelStyle.Render("Database:"), dbStr))
+		}
+	}
+
+	// DB env var name
+	if m.needsDB && m.step >= stepDBEnvVar && m.step < stepDeploying {
+		if m.step == stepDBEnvVar {
+			b.WriteString(fmt.Sprintf("  %s %s\n", labelStyle.Render("DB env var:"), m.inputs[4].View()))
+		} else {
+			b.WriteString(fmt.Sprintf("  %s %s\n", labelStyle.Render("DB env var:"), m.inputs[4].Value()))
+		}
+	}
+
+	// Environment variables
+	if m.step >= stepEnvVars && m.step < stepDeploying {
+		if len(m.envVars) > 0 {
+			for _, ev := range m.envVars {
+				parts := strings.SplitN(ev, "=", 2)
+				b.WriteString(fmt.Sprintf("  %s %s\n", dimStyle.Render(parts[0]+"="), parts[1]))
+			}
+		}
+		if m.step == stepEnvVars {
+			b.WriteString(fmt.Sprintf("  %s %s\n", labelStyle.Render("Env var:"), m.envInput.View()))
+			b.WriteString(dimStyle.Render("    Enter KEY=VALUE, empty line to finish"))
+			b.WriteString("\n")
 		}
 	}
 
@@ -317,7 +369,7 @@ func (m Model) View() string {
 		b.WriteString("\n" + errStyle.Render(fmt.Sprintf("  %v", m.err)))
 	}
 
-	if m.step != stepAdvanced {
+	if m.step < stepDeploying {
 		b.WriteString(dimStyle.Render("\n\n  [esc] Cancel"))
 	}
 
@@ -330,7 +382,13 @@ func (m Model) deploy() tea.Cmd {
 	domain := strings.TrimSpace(m.inputs[2].Value())
 	portStr := strings.TrimSpace(m.inputs[3].Value())
 	needsDB := m.needsDB
+	dbEnvVar := strings.TrimSpace(m.inputs[4].Value())
+	if dbEnvVar == "" {
+		dbEnvVar = "DATABASE_URL"
+	}
 	tls := m.tls
+	envVars := make([]string, len(m.envVars))
+	copy(envVars, m.envVars)
 
 	port := 8080
 	if portStr != "" {
@@ -344,9 +402,26 @@ func (m Model) deploy() tea.Cmd {
 		ctx := context.Background()
 
 		// Launch container — detect OCI vs Linux container image
+		// OCI if: has a registry domain (.io, .com, .dev), or uses remote:image format
+		// where the remote is a configured OCI remote
 		isOCI := strings.Contains(image, "docker.io") ||
 			strings.Contains(image, ".io/") ||
-			strings.Contains(image, ".com/")
+			strings.Contains(image, ".com/") ||
+			strings.Contains(image, ".dev/")
+		if !isOCI && strings.Contains(image, ":") {
+			parts := strings.SplitN(image, ":", 2)
+			if !strings.Contains(parts[0], ".") && !strings.Contains(parts[0], "/") {
+				// Looks like "remote:alias" — check if it's a known OCI remote
+				if remotes, err := ic.ListRemotes(); err == nil {
+					for _, r := range remotes {
+						if r.Name == parts[0] {
+							isOCI = true
+							break
+						}
+					}
+				}
+			}
+		}
 		if isOCI {
 			if err := ic.LaunchOCI(ctx, name, image); err != nil {
 				return deployResult{err: fmt.Errorf("launching OCI container: %w", err)}
@@ -375,9 +450,38 @@ func (m Model) deploy() tea.Cmd {
 			if err := db.CreateDatabase(ctx, ic, name); err != nil {
 				return deployResult{err: fmt.Errorf("creating database: %w", err)}
 			}
+
+			// Get db1 IP for connection string
+			dbIP, err := ic.GetContainerIP(ctx, "db1")
+			if err != nil {
+				dbIP = "db1.incus" // fallback to DNS
+			}
+			connStr := db.GetDBConnectionString(dbIP, name)
+
+			// Inject DATABASE_URL env var into the container
+			if err := ic.SetEnvVar(ctx, name, dbEnvVar, connStr); err != nil {
+				return deployResult{err: fmt.Errorf("setting %s: %w", dbEnvVar, err)}
+			}
+		}
+
+		// Set additional env vars
+		for _, ev := range envVars {
+			parts := strings.SplitN(ev, "=", 2)
+			if len(parts) == 2 {
+				if err := ic.SetEnvVar(ctx, name, parts[0], parts[1]); err != nil {
+					return deployResult{err: fmt.Errorf("setting env %s: %w", parts[0], err)}
+				}
+			}
 		}
 
 		// Save to registry
+		envMap := make(map[string]string)
+		for _, ev := range envVars {
+			parts := strings.SplitN(ev, "=", 2)
+			if len(parts) == 2 {
+				envMap[parts[0]] = parts[1]
+			}
+		}
 		app := &registry.App{
 			Name:      name,
 			Type:      registry.AppTypeContainer,
@@ -388,6 +492,8 @@ func (m Model) deploy() tea.Cmd {
 			HasDB:     needsDB,
 			DBName:    dbName,
 			DBUser:    dbName,
+			DBEnvVar:  dbEnvVar,
+			EnvVars:   envMap,
 			LastIP:    ip,
 			CreatedAt: time.Now(),
 		}
