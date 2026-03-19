@@ -21,6 +21,7 @@ type subview int
 const (
 	subviewMenu subview = iota
 	subviewLogs
+	subviewConfirmRestart
 	subviewConfirmDelete
 )
 
@@ -151,6 +152,22 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.viewport, cmd = m.viewport.Update(msg)
 		return m, cmd
 
+	case subviewConfirmRestart:
+		switch key {
+		case "c":
+			m.busy = true
+			m.subview = subviewMenu
+			return m, m.restartApp()
+		case "s":
+			m.busy = true
+			m.subview = subviewMenu
+			return m, m.restartService()
+		case "esc", "n":
+			m.subview = subviewMenu
+			return m, nil
+		}
+		return m, nil
+
 	case subviewConfirmDelete:
 		switch key {
 		case "y":
@@ -174,28 +191,18 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case "s":
-			if m.isSystem {
-				return m, nil
-			}
 			m.busy = true
 			m.message = ""
 			return m, m.stopApp()
 
 		case "t":
-			if m.isSystem {
-				return m, nil
-			}
 			m.busy = true
 			m.message = ""
 			return m, m.startApp()
 
 		case "r":
-			if m.isSystem {
-				return m, nil
-			}
-			m.busy = true
-			m.message = ""
-			return m, m.restartApp()
+			m.subview = subviewConfirmRestart
+			return m, nil
 
 		case "l":
 			m.busy = true
@@ -273,6 +280,14 @@ func (m Model) View() string {
 
 	b.WriteString("\n")
 
+	if m.subview == subviewConfirmRestart {
+		b.WriteString("  Restart type:\n")
+		b.WriteString("    [c] Container restart (stop and start the entire container)\n")
+		b.WriteString("    [s] Service restart (restart services inside the container)\n")
+		b.WriteString("    [esc] Cancel\n")
+		return b.String()
+	}
+
 	if m.subview == subviewConfirmDelete {
 		b.WriteString(warnStyle.Render("  Delete this app? This removes the container, Traefik route,"))
 		b.WriteString("\n")
@@ -298,7 +313,7 @@ func (m Model) View() string {
 
 	b.WriteString("\n")
 	if m.isSystem {
-		b.WriteString(dimStyle.Render("  [l] Logs  [esc] Back"))
+		b.WriteString(dimStyle.Render("  [s] Stop  [t] Start  [r] Restart  [l] Logs  [esc] Back"))
 	} else {
 		b.WriteString(dimStyle.Render("  [s] Stop  [t] Start  [r] Restart  [l] Logs  [d] Delete  [esc] Back"))
 	}
@@ -394,6 +409,61 @@ func (m Model) restartApp() tea.Cmd {
 		}
 
 		return actionResult{msg: "Restarted"}
+	}
+}
+
+func (m Model) restartService() tea.Cmd {
+	name := m.appName
+	ic := m.incusClient
+	return func() tea.Msg {
+		ctx := context.Background()
+
+		// Determine which services to restart
+		// For known system containers, restart their specific service
+		// For app containers, restart all non-system services
+		var services []string
+		switch name {
+		case "proxy1":
+			services = []string{"traefik"}
+		case "db1":
+			services = []string{"postgresql"}
+		default:
+			// For app containers, try to restart all active services
+			// List failed or active services and restart them
+			output, err := ic.Exec(ctx, name, []string{
+				"systemctl", "list-units", "--type=service", "--state=active",
+				"--no-pager", "--no-legend", "--plain",
+			})
+			if err == nil {
+				for _, line := range strings.Split(output, "\n") {
+					fields := strings.Fields(line)
+					if len(fields) > 0 && strings.HasSuffix(fields[0], ".service") {
+						svc := strings.TrimSuffix(fields[0], ".service")
+						// Skip system services
+						if svc != "systemd-journald" && svc != "systemd-logind" &&
+							svc != "dbus" && svc != "cron" && svc != "ssh" &&
+							!strings.HasPrefix(svc, "systemd-") {
+							services = append(services, svc)
+						}
+					}
+				}
+			}
+		}
+
+		if len(services) == 0 {
+			return actionResult{msg: "No services found to restart"}
+		}
+
+		var restarted []string
+		for _, svc := range services {
+			_, err := ic.Exec(ctx, name, []string{"systemctl", "restart", svc})
+			if err != nil {
+				return actionResult{err: fmt.Errorf("restarting %s: %w", svc, err)}
+			}
+			restarted = append(restarted, svc)
+		}
+
+		return actionResult{msg: fmt.Sprintf("Restarted services: %s", strings.Join(restarted, ", "))}
 	}
 }
 
