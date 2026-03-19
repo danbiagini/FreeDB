@@ -30,6 +30,7 @@ const (
 	stepTLS
 	stepDB
 	stepDBEnvVar
+	stepEnvVars
 	stepConfirm
 	stepDeploying
 	stepDone
@@ -44,6 +45,8 @@ type Model struct {
 	inputs      []textinput.Model
 	needsDB     bool
 	tls         bool
+	envVars     []string // accumulated KEY=VALUE entries
+	envInput    textinput.Model
 	incusClient *incus.Client
 	registry    *registry.AppRegistry
 	cfg         *config.Config
@@ -77,9 +80,14 @@ func NewModel(ic *incus.Client, reg *registry.AppRegistry, cfg *config.Config) M
 	inputs[4].Placeholder = "DATABASE_URL"
 	inputs[4].CharLimit = 50
 
+	envInput := textinput.New()
+	envInput.Placeholder = "KEY=VALUE (enter to add, empty to finish)"
+	envInput.CharLimit = 200
+
 	return Model{
 		step:        stepName,
 		inputs:      inputs,
+		envInput:    envInput,
 		tls:         true, // default: TLS enabled
 		incusClient: ic,
 		registry:    reg,
@@ -122,7 +130,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.inputs[4].Focus()
 					return m, nil
 				}
-				m.step = stepConfirm
+				m.step = stepEnvVars
+				m.envInput.SetValue("")
+				m.envInput.Focus()
 				return m, nil
 			}
 
@@ -147,6 +157,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			idx = 4
 		}
 		m.inputs[idx], cmd = m.inputs[idx].Update(msg)
+		return m, cmd
+	}
+	if m.step == stepEnvVars {
+		var cmd tea.Cmd
+		m.envInput, cmd = m.envInput.Update(msg)
 		return m, cmd
 	}
 
@@ -204,7 +219,25 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 
 	case stepDBEnvVar:
 		m.err = nil
-		m.step = stepConfirm
+		m.step = stepEnvVars
+		m.envInput.SetValue("")
+		m.envInput.Focus()
+		return m, nil
+
+	case stepEnvVars:
+		// Enter with empty value = done adding env vars
+		val := strings.TrimSpace(m.envInput.Value())
+		if val == "" {
+			m.step = stepConfirm
+			return m, nil
+		}
+		if !strings.Contains(val, "=") {
+			m.err = fmt.Errorf("format: KEY=VALUE")
+			return m, nil
+		}
+		m.err = nil
+		m.envVars = append(m.envVars, val)
+		m.envInput.SetValue("")
 		return m, nil
 
 	case stepConfirm:
@@ -286,6 +319,21 @@ func (m Model) View() string {
 		}
 	}
 
+	// Environment variables
+	if m.step >= stepEnvVars && m.step < stepDeploying {
+		if len(m.envVars) > 0 {
+			for _, ev := range m.envVars {
+				parts := strings.SplitN(ev, "=", 2)
+				b.WriteString(fmt.Sprintf("  %s %s\n", dimStyle.Render(parts[0]+"="), parts[1]))
+			}
+		}
+		if m.step == stepEnvVars {
+			b.WriteString(fmt.Sprintf("  %s %s\n", labelStyle.Render("Env var:"), m.envInput.View()))
+			b.WriteString(dimStyle.Render("    Enter KEY=VALUE, empty line to finish"))
+			b.WriteString("\n")
+		}
+	}
+
 	// External access summary
 	if m.step == stepConfirm {
 		domain := m.inputs[2].Value()
@@ -339,6 +387,8 @@ func (m Model) deploy() tea.Cmd {
 		dbEnvVar = "DATABASE_URL"
 	}
 	tls := m.tls
+	envVars := make([]string, len(m.envVars))
+	copy(envVars, m.envVars)
 
 	port := 8080
 	if portStr != "" {
@@ -414,7 +464,24 @@ func (m Model) deploy() tea.Cmd {
 			}
 		}
 
+		// Set additional env vars
+		for _, ev := range envVars {
+			parts := strings.SplitN(ev, "=", 2)
+			if len(parts) == 2 {
+				if err := ic.SetEnvVar(ctx, name, parts[0], parts[1]); err != nil {
+					return deployResult{err: fmt.Errorf("setting env %s: %w", parts[0], err)}
+				}
+			}
+		}
+
 		// Save to registry
+		envMap := make(map[string]string)
+		for _, ev := range envVars {
+			parts := strings.SplitN(ev, "=", 2)
+			if len(parts) == 2 {
+				envMap[parts[0]] = parts[1]
+			}
+		}
 		app := &registry.App{
 			Name:      name,
 			Type:      registry.AppTypeContainer,
@@ -426,6 +493,7 @@ func (m Model) deploy() tea.Cmd {
 			DBName:    dbName,
 			DBUser:    dbName,
 			DBEnvVar:  dbEnvVar,
+			EnvVars:   envMap,
 			LastIP:    ip,
 			CreatedAt: time.Now(),
 		}
