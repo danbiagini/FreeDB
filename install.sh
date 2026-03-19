@@ -1,6 +1,10 @@
 #!/bin/bash
 set -euo pipefail
 
+# Close stdin to prevent commands from accidentally reading the curl pipe
+# when run via: curl ... | bash
+exec < /dev/null
+
 # FreeDB bootstrap installer
 # Usage: curl -fsSL https://raw.githubusercontent.com/danbiagini/FreeDB/main/install.sh | bash
 #
