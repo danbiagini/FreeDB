@@ -64,12 +64,13 @@ func NewModel(ic *incus.Client, reg *registry.AppRegistry, cfg *config.Config) M
 	columns := []table.Column{
 		{Title: "Name", Width: 16},
 		{Title: "Status", Width: 10},
-		{Title: "Image", Width: 20},
-		{Title: "Domain", Width: 22},
+		{Title: "Image", Width: 18},
+		{Title: "Domain", Width: 20},
 		{Title: "Mem", Width: 7},
 		{Title: "CPU", Width: 6},
-		{Title: "Today", Width: 8},
-		{Title: "7d avg", Width: 8},
+		{Title: "Today", Width: 7},
+		{Title: "Err%", Width: 5},
+		{Title: "7d avg", Width: 7},
 	}
 
 	t := table.New(
@@ -162,15 +163,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 
 				today := "—"
+				errPct := "—"
 				avg7d := "—"
-				if msg.metrics != nil && m.history != nil {
-					todayReqs := m.history.TodayRequests(cd.info.Name, msg.metrics)
-					if todayReqs > 0 {
-						today = formatReqs(todayReqs)
+				if msg.metrics != nil {
+					if sm, ok := msg.metrics[cd.info.Name]; ok && sm.TotalReqs > 0 {
+						if m.history != nil {
+							todayReqs := m.history.TodayRequests(cd.info.Name, msg.metrics)
+							if todayReqs > 0 {
+								today = formatReqs(todayReqs)
+							}
+						}
+						pct := (sm.ErrorReqs / sm.TotalReqs) * 100
+						if pct > 0 {
+							errPct = fmt.Sprintf("%.1f", pct)
+						} else {
+							errPct = "0"
+						}
 					}
-					avgReqs := m.history.AvgDailyRequests(cd.info.Name, 7)
-					if avgReqs > 0 {
-						avg7d = formatReqs(avgReqs)
+					if m.history != nil {
+						avgReqs := m.history.AvgDailyRequests(cd.info.Name, 7)
+						if avgReqs > 0 {
+							avg7d = formatReqs(avgReqs)
+						}
 					}
 				}
 
@@ -182,6 +196,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					mem,
 					cpu,
 					today,
+					errPct,
 					avg7d,
 				})
 			}
