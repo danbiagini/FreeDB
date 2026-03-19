@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -292,44 +293,23 @@ func parseImageRef(imageRef string) (string, string) {
 	return "docker", alias
 }
 
-// LaunchOCI launches a container from an OCI image using incus remotes.
+// LaunchOCI launches a container from an OCI image using the incus CLI.
+// The Go API's server-side pull doesn't handle authenticated registries correctly
+// (the daemon's skopeo context differs from the CLI's client-side pull).
+// Using the CLI ensures auth.json and XDG_RUNTIME_DIR are resolved properly.
+//
 // imageRef examples:
 //   - "docker.io/traefik/whoami"
 //   - "gcr:project/repo/image:tag"
 //   - "us-central1-docker.pkg.dev/project/repo/image:tag"
 func (c *Client) LaunchOCI(ctx context.Context, name, imageRef string) error {
 	remote, alias := parseImageRef(imageRef)
+	ref := fmt.Sprintf("%s:%s", remote, alias)
 
-	// Load incus client config to get remote server address
-	conf, err := cliconfig.LoadConfig("")
+	cmd := exec.CommandContext(ctx, "incus", "launch", ref, name, "--profile", "default")
+	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("loading incus config: %w", err)
-	}
-
-	remoteConfig, ok := conf.Remotes[remote]
-	if !ok {
-		return fmt.Errorf("remote %q not found in incus config — add it via [R] Registries", remote)
-	}
-
-	req := api.InstancesPost{
-		Name:  name,
-		Type:  api.InstanceTypeContainer,
-		Start: true,
-		Source: api.InstanceSource{
-			Type:     "image",
-			Alias:    alias,
-			Server:   remoteConfig.Addr,
-			Protocol: "oci",
-			Mode:     "pull",
-		},
-	}
-
-	op, err := c.conn.CreateInstance(req)
-	if err != nil {
-		return fmt.Errorf("creating %s: %w", name, err)
-	}
-	if err := op.Wait(); err != nil {
-		return fmt.Errorf("creating %s: %w", name, err)
+		return fmt.Errorf("creating %s: %s", name, strings.TrimSpace(string(output)))
 	}
 
 	return nil
