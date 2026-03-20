@@ -1,6 +1,6 @@
 # FreeDB
 
-A self-hosting platform for deploying web applications on a single VM using [Linux Containers](https://linuxcontainers.org/) and a reverse proxy. Provision the infrastructure with OpenTofu, then install the platform with a single command.
+A self-hosting platform for deploying web applications on a single VM using [Linux Containers](https://linuxcontainers.org/) and a reverse proxy. Provision the infrastructure with OpenTofu, then install the platform with a single command. Manage everything through a terminal UI.
 
 ## Why?
 
@@ -17,7 +17,6 @@ FreeDB takes a different approach: a **fixed-cost VM** running a lightweight con
 ```
 Internet → Static IP → Traefik (TLS) → App Containers (Incus)
                                       → PostgreSQL
-                                      → VM Apps (optional, for GPU/ML workloads)
 ```
 
 - **[Incus](https://linuxcontainers.org/incus/)** manages lightweight containers on the host VM
@@ -29,11 +28,54 @@ Internet → Static IP → Traefik (TLS) → App Containers (Incus)
 
 | Layer | Technology |
 |---|---|
-| Infrastructure | OpenTofu (GCP, AWS planned) |
+| Infrastructure | OpenTofu (GCP, AWS) |
 | Containers | Incus + ZFS |
 | Reverse Proxy | Traefik v3 with automatic TLS |
-| Database | PostgreSQL 15 |
+| Database | PostgreSQL |
 | Backups | Nightly pg_dump to cloud storage (30-day retention) |
+| App Manager | Go + Bubbletea TUI |
+
+## TUI App Manager
+
+FreeDB includes `freedb`, a terminal UI for managing your deployed apps. SSH in, run `sudo freedb`, and you get a live dashboard with all your containers.
+
+```
+FreeDB  test-freedb | GCP | 34.56.78.90 | 2 CPUs
+
+  Name          Status    Image          Domain                Mem     CPU    Reqs   Err%
+  ──────────────────────────────────────────────────────────────────────────────────────────
+  proxy1        Running   —              —                     38MB    4.3%   —      —
+  db1           Running   —              —                     256MB   <0.1%  —      —
+  myapp         Running   whoami         myapp.example.com     12MB    <0.1%  47     0
+  sportsoil     Running   sportsoil      sportsoil.stage       128MB   1.2%   312    0.1
+
+  [a] Add App  [enter] Manage  [R] Registries  [v] Version  [q] Quit
+```
+
+### Key Features
+
+- **Deploy apps** from Docker Hub, GCP Artifact Registry, AWS ECR, or any OCI registry
+- **Zero-downtime updates** — pull latest image, launch new container, switch Traefik route, then remove old container (blue-green deployment)
+- **Automatic TLS** — Let's Encrypt certificates provisioned and renewed automatically via Traefik
+- **Database provisioning** — creates PostgreSQL database + user, injects `DATABASE_URL` into the container
+- **Environment variable management** — add, edit, delete env vars on running containers
+- **Live monitoring** — CPU%, memory, request counts, error rates from Traefik Prometheus metrics
+- **Registry management** — configure private registries with authentication
+- **Health checks** — `freedb check` validates the entire platform stack
+
+### Install the TUI
+
+```bash
+# Download the latest release
+curl -fsSL https://github.com/danbiagini/FreeDB/releases/latest/download/freedb-linux-amd64 -o /usr/local/bin/freedb
+chmod +x /usr/local/bin/freedb
+
+# Or build from source
+cd tui && make build-linux
+scp build/freedb-linux-amd64 host:/usr/local/bin/freedb
+```
+
+See [tui/README.md](tui/README.md) for keyboard shortcuts and usage details.
 
 ## Architecture
 
@@ -46,6 +88,7 @@ infra/          Cloud infrastructure (OpenTofu)
 platform/       Host platform setup (Incus, Traefik, PostgreSQL)
 apps/           App-specific configs and deploy helpers
 ops/            Operational scripts (backups, cron, utilities)
+tui/            Terminal UI app manager (Go)
 docs/           Design docs
 install.sh      One-command bootstrap installer
 ```
@@ -54,6 +97,8 @@ install.sh      One-command bootstrap installer
 
 ### 1. Provision infrastructure
 
+FreeDB supports both GCP and AWS. For GCP with OpenTofu:
+
 ```bash
 cd infra
 gcloud storage buckets create gs://freedb-tf-state --location=us-central1 --uniform-bucket-level-access
@@ -61,27 +106,32 @@ tofu init
 tofu apply -var-file=values.tfvars
 ```
 
+For AWS, provision an EC2 instance with a Debian 12+ AMI and an attached EBS volume.
+
 ### 2. Install the platform
 
 SSH to the host and run the installer:
 
 ```bash
-gcloud compute ssh --zone "us-central1-a" "freedb" --tunnel-through-iap
 curl -fsSL https://raw.githubusercontent.com/danbiagini/FreeDB/main/install.sh | bash
 ```
 
-The installer handles everything: Incus + ZFS, Traefik, PostgreSQL, backups. It reboots once for the ZFS kernel module — just re-run the same command after reboot.
-
-To install a specific version:
-```bash
-FREEDB_BRANCH=v0.2 curl -fsSL https://raw.githubusercontent.com/danbiagini/FreeDB/main/install.sh | bash
-```
+The installer handles everything: Incus + ZFS, Traefik, PostgreSQL, backups, registry auth. It reboots once for the ZFS kernel module — just re-run the same command after reboot.
 
 ### 3. Deploy apps
 
-Deploy container apps using the deploy helper:
+Use the TUI:
+
 ```bash
-sudo -u incus /home/incus/deploy/deploy-container.sh <name> <remote> <image:tag>
+sudo freedb
+```
+
+Press `[a]` to add an app. The wizard walks through: name, image, domain, port, TLS, database, environment variables.
+
+Or verify the platform is healthy:
+
+```bash
+sudo freedb check
 ```
 
 ### Creating a test environment
@@ -94,13 +144,18 @@ tofu apply -var-file=test.tfvars
 
 See `test.tfvars.example` for required variables.
 
-### Traefik dashboard
+## Multi-Cloud Support
 
-Access via IAP tunnel:
-```bash
-gcloud compute start-iap-tunnel --zone "us-central1-a" "freedb" 8080
-```
-Note the local port and connect with web preview on that port.
+FreeDB runs on both GCP and AWS with automatic cloud detection:
+
+| Feature | GCP | AWS |
+|---|---|---|
+| Install | One-command | One-command |
+| Private registry | Artifact Registry (auto-configured) | ECR (auto-configured) |
+| Auth refresh | 45-min cron (OAuth2 token) | 6-hour cron (ECR token) |
+| Backups | Cloud Storage | S3 |
+
+See [docs/multi-cloud-design.md](docs/multi-cloud-design.md) for the full design.
 
 ## App Examples
 
@@ -110,11 +165,15 @@ The `apps/` directory contains example app configurations:
 
 ## Roadmap
 
-- **TUI app manager** — Terminal UI for deploying, managing, and monitoring apps without touching scripts. See [design doc](docs/tui-design.md).
-- **Multi-cloud support** — AWS alongside GCP. See [design doc](docs/multi-cloud-design.md).
+- **Background metrics collector** — systemd timer for daily traffic snapshots, enabling "Today" and "7d avg" columns. See [#6](https://github.com/danbiagini/FreeDB/issues/6).
+- **VM-based apps** — provision dedicated cloud VMs for GPU/ML workloads from the TUI.
+- **GitHub Releases** — prebuilt binaries for the TUI without needing Go installed.
 
 ## References
 
 - [Incus documentation](https://linuxcontainers.org/incus/docs/main/installing/#linux)
 - [OpenTofu](https://opentofu.org/)
+- [TUI design doc](docs/tui-design.md)
+- [Multi-cloud design doc](docs/multi-cloud-design.md)
 
+[^1]: [Streamlit](https://streamlit.io/) offers a nice python-centric development experience with an impressive UX. The FE components use web sockets to communicate with the backend, which means as long as the browser is open there's an active connection keeping the instance up.

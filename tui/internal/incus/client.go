@@ -195,6 +195,33 @@ func (c *Client) DeleteContainer(ctx context.Context, name string) error {
 	return op.Wait()
 }
 
+// GetInstanceConfig returns the full config map for a container
+func (c *Client) RenameContainer(ctx context.Context, oldName, newName string) error {
+	op, err := c.conn.RenameInstance(oldName, api.InstancePost{Name: newName})
+	if err != nil {
+		return fmt.Errorf("renaming %s to %s: %w", oldName, newName, err)
+	}
+	return op.Wait()
+}
+
+func (c *Client) GetInstanceConfig(ctx context.Context, name string) (map[string]string, error) {
+	inst, _, err := c.conn.GetInstance(name)
+	if err != nil {
+		return nil, fmt.Errorf("getting instance %s: %w", name, err)
+	}
+	return inst.Config, nil
+}
+
+// RestoreEnvVars sets all environment.* config keys on a container
+func (c *Client) RestoreEnvVars(ctx context.Context, name string, envVars map[string]string) error {
+	for k, v := range envVars {
+		if err := c.SetEnvVar(ctx, name, k, v); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (c *Client) SetEnvVar(ctx context.Context, name, key, value string) error {
 	inst, etag, err := c.conn.GetInstance(name)
 	if err != nil {

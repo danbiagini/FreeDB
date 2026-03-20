@@ -25,6 +25,7 @@ const (
 	subviewLogs
 	subviewConfirmRestart
 	subviewConfirmDelete
+	subviewConfirmUpdate
 	subviewEnvVars
 	subviewEnvVarAdd
 	subviewEnvVarConfirmDelete
@@ -198,6 +199,18 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case subviewConfirmUpdate:
+		switch key {
+		case "y":
+			m.busy = true
+			m.subview = subviewMenu
+			return m, m.updateApp()
+		case "n", "esc":
+			m.subview = subviewMenu
+			return m, nil
+		}
+		return m, nil
+
 	case subviewConfirmDelete:
 		switch key {
 		case "y":
@@ -244,6 +257,13 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.message = ""
 			m.err = nil
 			return m, m.fetchEnvVars()
+
+		case "u":
+			if m.isSystem || m.app == nil {
+				return m, nil
+			}
+			m.subview = subviewConfirmUpdate
+			return m, nil
 
 		case "d":
 			if m.isSystem {
@@ -441,6 +461,22 @@ func (m Model) View() string {
 		return b.String()
 	}
 
+	if m.subview == subviewConfirmUpdate {
+		if m.app != nil {
+			b.WriteString(fmt.Sprintf("  Pull latest image and redeploy %s?\n", m.appName))
+			b.WriteString(dimStyle.Render(fmt.Sprintf("  Image: %s\n", m.app.Image)))
+			b.WriteString("\n")
+			b.WriteString("  This will:\n")
+			b.WriteString("    1. Launch new container from fresh image\n")
+			b.WriteString("    2. Restore environment variables\n")
+			b.WriteString("    3. Switch Traefik route to new container\n")
+			b.WriteString("    4. Remove old container\n")
+			b.WriteString("\n")
+			b.WriteString("  [y] Yes  [n] No\n")
+		}
+		return b.String()
+	}
+
 	if m.subview == subviewConfirmDelete {
 		b.WriteString(warnStyle.Render("  Delete this app? This removes the container, Traefik route,"))
 		b.WriteString("\n")
@@ -468,7 +504,7 @@ func (m Model) View() string {
 	if m.isSystem {
 		b.WriteString(dimStyle.Render("  [s] Stop  [t] Start  [r] Restart  [l] Logs  [e] Env  [esc] Back"))
 	} else {
-		b.WriteString(dimStyle.Render("  [s] Stop  [t] Start  [r] Restart  [l] Logs  [e] Env  [d] Delete  [esc] Back"))
+		b.WriteString(dimStyle.Render("  [s] Stop  [t] Start  [r] Restart  [u] Update  [l] Logs  [e] Env  [d] Delete  [esc] Back"))
 	}
 
 	return b.String()
@@ -667,6 +703,71 @@ func (m Model) deleteApp() tea.Cmd {
 		}
 
 		return actionResult{msg: "Deleted"}
+	}
+}
+
+func (m Model) updateApp() tea.Cmd {
+	name := m.appName
+	app := m.app
+	ic := m.incusClient
+	reg := m.registry
+	return func() tea.Msg {
+		if app == nil {
+			return actionResult{err: fmt.Errorf("no app config found")}
+		}
+
+		ctx := context.Background()
+		newName := name + "-new"
+
+		// 1. Save env vars from the old container
+		envVars, err := ic.GetEnvVars(ctx, name)
+		if err != nil {
+			envVars = make(map[string]string) // continue without env vars
+		}
+
+		// 2. Launch new container from the same image
+		if err := ic.LaunchOCI(ctx, newName, app.Image); err != nil {
+			return actionResult{err: fmt.Errorf("launching new container: %w", err)}
+		}
+
+		// 3. Wait for IP on the new container
+		newIP, err := ic.WaitForIP(ctx, newName, 30*time.Second)
+		if err != nil {
+			// Cleanup: delete the new container
+			_ = ic.DeleteContainer(ctx, newName)
+			return actionResult{err: fmt.Errorf("new container failed to get IP: %w", err)}
+		}
+
+		// 4. Restore env vars on the new container
+		if len(envVars) > 0 {
+			if err := ic.RestoreEnvVars(ctx, newName, envVars); err != nil {
+				_ = ic.DeleteContainer(ctx, newName)
+				return actionResult{err: fmt.Errorf("restoring env vars: %w", err)}
+			}
+		}
+
+		// 5. Switch Traefik route to the new container (zero-downtime cutover)
+		if app.Domain != "" {
+			if err := traefik.PushRoute(ic, name, app.Domain, newIP, app.Port, app.TLS); err != nil {
+				_ = ic.DeleteContainer(ctx, newName)
+				return actionResult{err: fmt.Errorf("updating route: %w", err)}
+			}
+		}
+
+		// 6. Stop and delete the old container
+		_ = ic.DeleteContainer(ctx, name)
+
+		// 7. Rename new container to the original name
+		if err := ic.RenameContainer(ctx, newName, name); err != nil {
+			// Rename failed — update registry to track new name
+			_ = reg.UpdateIP(name, newIP)
+			return actionResult{msg: fmt.Sprintf("Updated (container is now named %s)", newName)}
+		}
+
+		// Update registry with new IP
+		_ = reg.UpdateIP(name, newIP)
+
+		return actionResult{msg: "Updated successfully"}
 	}
 }
 
