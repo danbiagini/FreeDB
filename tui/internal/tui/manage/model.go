@@ -25,6 +25,7 @@ const (
 	subviewLogs
 	subviewConfirmRestart
 	subviewConfirmDelete
+	subviewUpdateTag
 	subviewConfirmUpdate
 	subviewEnvVars
 	subviewEnvVarAdd
@@ -64,6 +65,9 @@ type Model struct {
 	err         error
 	done        bool
 	busy        bool
+	// Update
+	updateInput textinput.Model
+	updateImage string // resolved image with new tag
 	// Env var editor
 	envVars     map[string]string
 	envKeys     []string // sorted keys for display
@@ -199,12 +203,39 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case subviewUpdateTag:
+		switch key {
+		case "esc":
+			m.subview = subviewMenu
+			return m, nil
+		case "enter":
+			tag := strings.TrimSpace(m.updateInput.Value())
+			if tag == "" {
+				tag = "latest"
+			}
+			// Build the new image ref with the chosen tag
+			img := m.app.Image
+			// Strip old tag
+			if idx := strings.LastIndex(img, ":"); idx > 0 {
+				after := img[idx+1:]
+				if !strings.Contains(after, "/") {
+					img = img[:idx]
+				}
+			}
+			m.updateImage = img + ":" + tag
+			m.subview = subviewConfirmUpdate
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.updateInput, cmd = m.updateInput.Update(msg)
+		return m, cmd
+
 	case subviewConfirmUpdate:
 		switch key {
 		case "y":
 			m.busy = true
 			m.subview = subviewMenu
-			return m, m.updateApp()
+			return m, m.updateApp(m.updateImage)
 		case "n", "esc":
 			m.subview = subviewMenu
 			return m, nil
@@ -262,8 +293,23 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.isSystem || m.app == nil {
 				return m, nil
 			}
-			m.subview = subviewConfirmUpdate
-			return m, nil
+			// Extract current tag from image ref
+			currentTag := "latest"
+			img := m.app.Image
+			if idx := strings.LastIndex(img, ":"); idx > 0 {
+				// Make sure : is a tag separator not a remote separator
+				after := img[idx+1:]
+				if !strings.Contains(after, "/") {
+					currentTag = after
+				}
+			}
+			m.updateInput = textinput.New()
+			m.updateInput.SetValue(currentTag)
+			m.updateInput.Focus()
+			m.updateInput.CharLimit = 50
+			m.subview = subviewUpdateTag
+			m.err = nil
+			return m, textinput.Blink
 
 		case "d":
 			if m.isSystem {
@@ -461,19 +507,26 @@ func (m Model) View() string {
 		return b.String()
 	}
 
+	if m.subview == subviewUpdateTag {
+		b.WriteString(fmt.Sprintf("  Update %s\n\n", m.appName))
+		b.WriteString(dimStyle.Render(fmt.Sprintf("  Current image: %s\n", m.app.Image)))
+		b.WriteString(fmt.Sprintf("  Tag: %s\n", m.updateInput.View()))
+		b.WriteString(dimStyle.Render("\n  [enter] Continue  [esc] Cancel"))
+		return b.String()
+	}
+
 	if m.subview == subviewConfirmUpdate {
-		if m.app != nil {
-			b.WriteString(fmt.Sprintf("  Pull latest image and redeploy %s?\n", m.appName))
-			b.WriteString(dimStyle.Render(fmt.Sprintf("  Image: %s\n", m.app.Image)))
-			b.WriteString("\n")
-			b.WriteString("  This will:\n")
-			b.WriteString("    1. Launch new container from fresh image\n")
-			b.WriteString("    2. Restore environment variables\n")
-			b.WriteString("    3. Switch Traefik route to new container\n")
-			b.WriteString("    4. Remove old container\n")
-			b.WriteString("\n")
-			b.WriteString("  [y] Yes  [n] No\n")
-		}
+		b.WriteString(fmt.Sprintf("  Update %s?\n\n", m.appName))
+		b.WriteString(fmt.Sprintf("  Image: %s\n", m.updateImage))
+		b.WriteString("\n")
+		b.WriteString("  This will:\n")
+		b.WriteString("    1. Pull fresh image from registry\n")
+		b.WriteString("    2. Launch new container alongside the current one\n")
+		b.WriteString("    3. Restore environment variables\n")
+		b.WriteString("    4. Switch Traefik route to new container (zero downtime)\n")
+		b.WriteString("    5. Remove old container\n")
+		b.WriteString("\n")
+		b.WriteString("  [y] Yes  [n] No\n")
 		return b.String()
 	}
 
@@ -706,7 +759,7 @@ func (m Model) deleteApp() tea.Cmd {
 	}
 }
 
-func (m Model) updateApp() tea.Cmd {
+func (m Model) updateApp(image string) tea.Cmd {
 	name := m.appName
 	app := m.app
 	ic := m.incusClient
@@ -726,10 +779,10 @@ func (m Model) updateApp() tea.Cmd {
 		}
 
 		// 2. Delete cached image to force a fresh pull
-		_ = ic.DeleteCachedImage(ctx, app.Image)
+		_ = ic.DeleteCachedImage(ctx, image)
 
 		// 3. Launch new container from the fresh image
-		if err := ic.LaunchOCI(ctx, newName, app.Image); err != nil {
+		if err := ic.LaunchOCI(ctx, newName, image); err != nil {
 			return actionResult{err: fmt.Errorf("launching new container: %w", err)}
 		}
 
@@ -767,10 +820,11 @@ func (m Model) updateApp() tea.Cmd {
 			return actionResult{msg: fmt.Sprintf("Updated (container is now named %s)", newName)}
 		}
 
-		// Update registry with new IP
+		// Update registry with new IP and image
 		_ = reg.UpdateIP(name, newIP)
+		_ = reg.UpdateImage(name, image)
 
-		return actionResult{msg: "Updated successfully"}
+		return actionResult{msg: fmt.Sprintf("Updated to %s", image)}
 	}
 }
 

@@ -93,3 +93,12 @@ func (r *AppRegistry) UpdateIP(name, ip string) error {
 	r.mu.Unlock()
 	return r.Save()
 }
+
+func (r *AppRegistry) UpdateImage(name, image string) error {
+	r.mu.Lock()
+	if app, ok := r.Apps[name]; ok {
+		app.Image = image
+	}
+	r.mu.Unlock()
+	return r.Save()
+}
