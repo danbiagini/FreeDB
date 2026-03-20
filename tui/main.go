@@ -6,6 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/danbiagini/freedb-tui/internal/check"
 	"github.com/danbiagini/freedb-tui/internal/config"
 	"github.com/danbiagini/freedb-tui/internal/incus"
 	"github.com/danbiagini/freedb-tui/internal/registry"
@@ -15,9 +16,35 @@ import (
 var version = "dev"
 
 func main() {
-	if len(os.Args) > 1 && (os.Args[1] == "--version" || os.Args[1] == "-v") {
-		fmt.Printf("freedb %s\n", version)
-		os.Exit(0)
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "--version", "-v":
+			fmt.Printf("freedb %s\n", version)
+			os.Exit(0)
+		case "--check", "check":
+			cfg, err := config.Load()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
+				os.Exit(1)
+			}
+			results := check.RunChecks(cfg)
+			check.PrintResults(results)
+			for _, r := range results {
+				if !r.OK {
+					os.Exit(1)
+				}
+			}
+			os.Exit(0)
+		case "--help", "-h", "help":
+			fmt.Println("freedb — FreeDB app manager")
+			fmt.Println()
+			fmt.Println("Usage:")
+			fmt.Println("  sudo freedb              Launch the TUI dashboard")
+			fmt.Println("  sudo freedb check        Run health checks")
+			fmt.Println("  freedb --version         Print version")
+			fmt.Println("  freedb --help            Show this help")
+			os.Exit(0)
+		}
 	}
 
 	cfg, err := config.Load()
