@@ -196,6 +196,42 @@ func (c *Client) DeleteContainer(ctx context.Context, name string) error {
 }
 
 // GetInstanceConfig returns the full config map for a container
+// DeleteCachedImage removes a locally cached OCI image to force a fresh pull.
+// Matches images by alias containing the image ref (best effort).
+func (c *Client) DeleteCachedImage(ctx context.Context, imageRef string) error {
+	_, alias := parseImageRef(imageRef)
+
+	images, err := c.conn.GetImages()
+	if err != nil {
+		return err
+	}
+
+	for _, img := range images {
+		// Match by alias or description containing the image ref
+		for _, a := range img.Aliases {
+			if strings.Contains(a.Name, alias) || strings.Contains(a.Description, alias) {
+				op, err := c.conn.DeleteImage(img.Fingerprint)
+				if err != nil {
+					continue
+				}
+				_ = op.Wait()
+				return nil
+			}
+		}
+		// Also check the update source
+		if img.UpdateSource != nil && strings.Contains(img.UpdateSource.Alias, alias) {
+			op, err := c.conn.DeleteImage(img.Fingerprint)
+			if err != nil {
+				continue
+			}
+			_ = op.Wait()
+			return nil
+		}
+	}
+
+	return nil // no cached image found, that's fine
+}
+
 func (c *Client) RenameContainer(ctx context.Context, oldName, newName string) error {
 	op, err := c.conn.RenameInstance(oldName, api.InstancePost{Name: newName})
 	if err != nil {

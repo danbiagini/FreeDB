@@ -725,7 +725,10 @@ func (m Model) updateApp() tea.Cmd {
 			envVars = make(map[string]string) // continue without env vars
 		}
 
-		// 2. Launch new container from the same image
+		// 2. Delete cached image to force a fresh pull
+		_ = ic.DeleteCachedImage(ctx, app.Image)
+
+		// 3. Launch new container from the fresh image
 		if err := ic.LaunchOCI(ctx, newName, app.Image); err != nil {
 			return actionResult{err: fmt.Errorf("launching new container: %w", err)}
 		}
