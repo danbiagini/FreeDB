@@ -97,12 +97,20 @@ func NewModel(appName string, app *registry.App, isSystem bool, ic *incus.Client
 
 func (m Model) Done() bool { return m.done }
 
+// containerName returns the actual incus container name (may differ from app name after updates)
+func (m Model) containerName() string {
+	if m.app != nil && m.app.ContainerName != "" {
+		return m.app.ContainerName
+	}
+	return m.appName
+}
+
 func (m Model) Init() tea.Cmd {
 	return m.fetchDetail()
 }
 
 func (m Model) fetchDetail() tea.Cmd {
-	name := m.appName
+	name := m.containerName()
 	ic := m.incusClient
 	return func() tea.Msg {
 		detail, err := ic.GetContainerDetail(context.Background(), name)
@@ -595,7 +603,7 @@ func formatBytes(b int64) string {
 }
 
 func (m Model) stopApp() tea.Cmd {
-	name := m.appName
+	name := m.containerName()
 	ic := m.incusClient
 	return func() tea.Msg {
 		err := ic.StopContainer(context.Background(), name)
@@ -607,7 +615,7 @@ func (m Model) stopApp() tea.Cmd {
 }
 
 func (m Model) startApp() tea.Cmd {
-	name := m.appName
+	name := m.containerName()
 	ic := m.incusClient
 	app := m.app
 	reg := m.registry
@@ -631,7 +639,7 @@ func (m Model) startApp() tea.Cmd {
 }
 
 func (m Model) restartApp() tea.Cmd {
-	name := m.appName
+	name := m.containerName()
 	ic := m.incusClient
 	app := m.app
 	reg := m.registry
@@ -655,7 +663,7 @@ func (m Model) restartApp() tea.Cmd {
 }
 
 func (m Model) restartService() tea.Cmd {
-	name := m.appName
+	name := m.containerName()
 	ic := m.incusClient
 	return func() tea.Msg {
 		ctx := context.Background()
@@ -710,7 +718,7 @@ func (m Model) restartService() tea.Cmd {
 }
 
 func (m Model) fetchLogs() tea.Cmd {
-	name := m.appName
+	name := m.containerName()
 	ic := m.incusClient
 	return func() tea.Msg {
 		output, err := ic.Exec(context.Background(), name, []string{
@@ -731,6 +739,7 @@ func (m Model) fetchLogs() tea.Cmd {
 
 func (m Model) deleteApp() tea.Cmd {
 	name := m.appName
+	cName := m.containerName()
 	app := m.app
 	ic := m.incusClient
 	reg := m.registry
@@ -738,7 +747,7 @@ func (m Model) deleteApp() tea.Cmd {
 		ctx := context.Background()
 
 		// Delete container
-		if err := ic.DeleteContainer(ctx, name); err != nil {
+		if err := ic.DeleteContainer(ctx, cName); err != nil {
 			return actionResult{err: fmt.Errorf("deleting container: %w", err)}
 		}
 
@@ -770,10 +779,17 @@ func (m Model) updateApp(image string) tea.Cmd {
 		}
 
 		ctx := context.Background()
-		newName := name + "-new"
+		timestamp := time.Now().Format("0102-1504") // MMDD-HHMM
+		newName := name + "-" + timestamp
+
+		// Resolve the actual container name (may differ from app name after previous updates)
+		oldContainerName := name
+		if app.ContainerName != "" {
+			oldContainerName = app.ContainerName
+		}
 
 		// 1. Save env vars from the old container
-		envVars, err := ic.GetEnvVars(ctx, name)
+		envVars, err := ic.GetEnvVars(ctx, oldContainerName)
 		if err != nil {
 			envVars = make(map[string]string) // continue without env vars
 		}
@@ -810,26 +826,20 @@ func (m Model) updateApp(image string) tea.Cmd {
 			}
 		}
 
-		// 6. Stop and delete the old container
-		_ = ic.DeleteContainer(ctx, name)
+		// 6. Delete the old container (no longer receiving traffic)
+		_ = ic.DeleteContainer(ctx, oldContainerName)
 
-		// 7. Rename new container to the original name
-		if err := ic.RenameContainer(ctx, newName, name); err != nil {
-			// Rename failed — update registry to track new name
-			_ = reg.UpdateIP(name, newIP)
-			return actionResult{msg: fmt.Sprintf("Updated (container is now named %s)", newName)}
-		}
-
-		// Update registry with new IP and image
+		// 7. Update registry — keep app name, track new container name
 		_ = reg.UpdateIP(name, newIP)
 		_ = reg.UpdateImage(name, image)
+		_ = reg.UpdateContainerName(name, newName)
 
 		return actionResult{msg: fmt.Sprintf("Updated to %s", image)}
 	}
 }
 
 func (m Model) fetchEnvVars() tea.Cmd {
-	name := m.appName
+	name := m.containerName()
 	ic := m.incusClient
 	return func() tea.Msg {
 		envs, err := ic.GetEnvVars(context.Background(), name)
@@ -838,7 +848,7 @@ func (m Model) fetchEnvVars() tea.Cmd {
 }
 
 func (m Model) setEnvVar(key, value string) tea.Cmd {
-	name := m.appName
+	name := m.containerName()
 	ic := m.incusClient
 	return func() tea.Msg {
 		if err := ic.SetEnvVar(context.Background(), name, key, value); err != nil {
@@ -851,7 +861,7 @@ func (m Model) setEnvVar(key, value string) tea.Cmd {
 }
 
 func (m Model) deleteEnvVar(key string) tea.Cmd {
-	name := m.appName
+	name := m.containerName()
 	ic := m.incusClient
 	return func() tea.Msg {
 		if err := ic.DeleteEnvVar(context.Background(), name, key); err != nil {

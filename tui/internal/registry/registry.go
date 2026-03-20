@@ -94,6 +94,15 @@ func (r *AppRegistry) UpdateIP(name, ip string) error {
 	return r.Save()
 }
 
+func (r *AppRegistry) UpdateContainerName(name, containerName string) error {
+	r.mu.Lock()
+	if app, ok := r.Apps[name]; ok {
+		app.ContainerName = containerName
+	}
+	r.mu.Unlock()
+	return r.Save()
+}
+
 func (r *AppRegistry) UpdateImage(name, image string) error {
 	r.mu.Lock()
 	if app, ok := r.Apps[name]; ok {

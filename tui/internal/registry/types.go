@@ -10,8 +10,9 @@ const (
 )
 
 type App struct {
-	Name      string            `json:"name"`
-	Type      AppType           `json:"type"`
+	Name          string            `json:"name"`
+	ContainerName string            `json:"container_name,omitempty"` // actual incus container name (may differ after updates)
+	Type          AppType           `json:"type"`
 	Image     string            `json:"image,omitempty"`
 	Domain    string            `json:"domain"`
 	Port      int               `json:"port"`
