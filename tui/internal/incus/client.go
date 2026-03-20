@@ -213,6 +213,36 @@ func (c *Client) SetEnvVar(ctx context.Context, name, key, value string) error {
 	return op.Wait()
 }
 
+func (c *Client) GetEnvVars(ctx context.Context, name string) (map[string]string, error) {
+	inst, _, err := c.conn.GetInstance(name)
+	if err != nil {
+		return nil, fmt.Errorf("getting instance %s: %w", name, err)
+	}
+
+	envs := make(map[string]string)
+	for k, v := range inst.Config {
+		if strings.HasPrefix(k, "environment.") {
+			envs[strings.TrimPrefix(k, "environment.")] = v
+		}
+	}
+	return envs, nil
+}
+
+func (c *Client) DeleteEnvVar(ctx context.Context, name, key string) error {
+	inst, etag, err := c.conn.GetInstance(name)
+	if err != nil {
+		return fmt.Errorf("getting instance %s: %w", name, err)
+	}
+
+	delete(inst.Config, "environment."+key)
+
+	op, err := c.conn.UpdateInstance(name, inst.Writable(), etag)
+	if err != nil {
+		return fmt.Errorf("updating instance %s: %w", name, err)
+	}
+	return op.Wait()
+}
+
 func (c *Client) PushFile(instance, path string, content []byte) error {
 	return c.conn.CreateInstanceFile(instance, path, incusclient.InstanceFileArgs{
 		Content:   bytes.NewReader(content),

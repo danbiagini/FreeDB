@@ -3,9 +3,11 @@ package manage
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -23,6 +25,9 @@ const (
 	subviewLogs
 	subviewConfirmRestart
 	subviewConfirmDelete
+	subviewEnvVars
+	subviewEnvVarAdd
+	subviewEnvVarConfirmDelete
 )
 
 type actionResult struct {
@@ -40,6 +45,11 @@ type detailResult struct {
 	err    error
 }
 
+type envVarsResult struct {
+	envVars map[string]string
+	err     error
+}
+
 type Model struct {
 	appName     string
 	app         *registry.App
@@ -53,6 +63,11 @@ type Model struct {
 	err         error
 	done        bool
 	busy        bool
+	// Env var editor
+	envVars     map[string]string
+	envKeys     []string // sorted keys for display
+	envSelected int
+	envInput    textinput.Model
 }
 
 func NewModel(appName string, app *registry.App, isSystem bool, ic *incus.Client, reg *registry.AppRegistry, width, height int) Model {
@@ -98,6 +113,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case detailResult:
 		if msg.err == nil {
 			m.detail = msg.detail
+		}
+		return m, nil
+
+	case envVarsResult:
+		m.busy = false
+		if msg.err != nil {
+			m.err = msg.err
+		} else {
+			m.envVars = msg.envVars
+			m.envKeys = make([]string, 0, len(msg.envVars))
+			for k := range msg.envVars {
+				m.envKeys = append(m.envKeys, k)
+			}
+			sort.Strings(m.envKeys)
+			m.envSelected = 0
 		}
 		return m, nil
 
@@ -209,11 +239,85 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.message = ""
 			return m, m.fetchLogs()
 
+		case "e":
+			m.subview = subviewEnvVars
+			m.message = ""
+			m.err = nil
+			return m, m.fetchEnvVars()
+
 		case "d":
 			if m.isSystem {
 				return m, nil
 			}
 			m.subview = subviewConfirmDelete
+			return m, nil
+		}
+
+	case subviewEnvVars:
+		switch key {
+		case "esc":
+			m.subview = subviewMenu
+			return m, nil
+		case "a":
+			m.subview = subviewEnvVarAdd
+			m.envInput = textinput.New()
+			m.envInput.Placeholder = "KEY=VALUE"
+			m.envInput.CharLimit = 200
+			m.envInput.Focus()
+			m.err = nil
+			return m, textinput.Blink
+		case "d":
+			if len(m.envKeys) > 0 && m.envSelected < len(m.envKeys) {
+				m.subview = subviewEnvVarConfirmDelete
+			}
+			return m, nil
+		case "up", "k":
+			if m.envSelected > 0 {
+				m.envSelected--
+			}
+			return m, nil
+		case "down", "j":
+			if m.envSelected < len(m.envKeys)-1 {
+				m.envSelected++
+			}
+			return m, nil
+		}
+
+	case subviewEnvVarAdd:
+		switch key {
+		case "esc":
+			m.subview = subviewEnvVars
+			return m, nil
+		case "enter":
+			val := strings.TrimSpace(m.envInput.Value())
+			if val == "" {
+				m.subview = subviewEnvVars
+				return m, nil
+			}
+			if !strings.Contains(val, "=") {
+				m.err = fmt.Errorf("format: KEY=VALUE")
+				return m, nil
+			}
+			parts := strings.SplitN(val, "=", 2)
+			m.busy = true
+			m.err = nil
+			return m, m.setEnvVar(parts[0], parts[1])
+		}
+		var cmd tea.Cmd
+		m.envInput, cmd = m.envInput.Update(msg)
+		return m, cmd
+
+	case subviewEnvVarConfirmDelete:
+		switch key {
+		case "y":
+			if m.envSelected < len(m.envKeys) {
+				m.busy = true
+				return m, m.deleteEnvVar(m.envKeys[m.envSelected])
+			}
+			m.subview = subviewEnvVars
+			return m, nil
+		case "n", "esc":
+			m.subview = subviewEnvVars
 			return m, nil
 		}
 	}
@@ -236,6 +340,55 @@ func (m Model) View() string {
 		b.WriteString(m.viewport.View())
 		b.WriteString("\n")
 		b.WriteString(dimStyle.Render("[esc] Back  [↑↓] Scroll"))
+		return b.String()
+	}
+
+	if m.subview == subviewEnvVars || m.subview == subviewEnvVarAdd || m.subview == subviewEnvVarConfirmDelete {
+		b.WriteString(titleStyle.Render(fmt.Sprintf("Environment: %s", m.appName)))
+		b.WriteString("\n\n")
+
+		if len(m.envKeys) == 0 {
+			b.WriteString(dimStyle.Render("  No environment variables set"))
+			b.WriteString("\n")
+		} else {
+			selectedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("229")).Background(lipgloss.Color("57"))
+			for i, k := range m.envKeys {
+				v := m.envVars[k]
+				line := fmt.Sprintf("  %-24s = %s", k, v)
+				if i == m.envSelected {
+					b.WriteString(selectedStyle.Render(line))
+				} else {
+					b.WriteString(line)
+				}
+				b.WriteString("\n")
+			}
+		}
+
+		b.WriteString("\n")
+
+		if m.subview == subviewEnvVarAdd {
+			b.WriteString(fmt.Sprintf("  %s\n", m.envInput.View()))
+		}
+
+		if m.subview == subviewEnvVarConfirmDelete && m.envSelected < len(m.envKeys) {
+			b.WriteString(warnStyle.Render(fmt.Sprintf("  Delete %s? [y/n]", m.envKeys[m.envSelected])))
+			b.WriteString("\n")
+		}
+
+		if m.busy {
+			b.WriteString("  Working...\n")
+		}
+		if m.err != nil {
+			b.WriteString(errStyle.Render(fmt.Sprintf("  %v", m.err)) + "\n")
+		}
+		if m.message != "" {
+			b.WriteString(successStyle.Render("  "+m.message) + "\n")
+		}
+
+		b.WriteString("\n")
+		b.WriteString(dimStyle.Render("  [a] Add  [d] Delete  [esc] Back"))
+		b.WriteString("\n")
+		b.WriteString(dimStyle.Render("  Note: container may need restart for changes to take effect"))
 		return b.String()
 	}
 
@@ -313,9 +466,9 @@ func (m Model) View() string {
 
 	b.WriteString("\n")
 	if m.isSystem {
-		b.WriteString(dimStyle.Render("  [s] Stop  [t] Start  [r] Restart  [l] Logs  [esc] Back"))
+		b.WriteString(dimStyle.Render("  [s] Stop  [t] Start  [r] Restart  [l] Logs  [e] Env  [esc] Back"))
 	} else {
-		b.WriteString(dimStyle.Render("  [s] Stop  [t] Start  [r] Restart  [l] Logs  [d] Delete  [esc] Back"))
+		b.WriteString(dimStyle.Render("  [s] Stop  [t] Start  [r] Restart  [l] Logs  [e] Env  [d] Delete  [esc] Back"))
 	}
 
 	return b.String()
@@ -514,5 +667,39 @@ func (m Model) deleteApp() tea.Cmd {
 		}
 
 		return actionResult{msg: "Deleted"}
+	}
+}
+
+func (m Model) fetchEnvVars() tea.Cmd {
+	name := m.appName
+	ic := m.incusClient
+	return func() tea.Msg {
+		envs, err := ic.GetEnvVars(context.Background(), name)
+		return envVarsResult{envVars: envs, err: err}
+	}
+}
+
+func (m Model) setEnvVar(key, value string) tea.Cmd {
+	name := m.appName
+	ic := m.incusClient
+	return func() tea.Msg {
+		if err := ic.SetEnvVar(context.Background(), name, key, value); err != nil {
+			return actionResult{err: err}
+		}
+		// Refresh the env var list
+		envs, _ := ic.GetEnvVars(context.Background(), name)
+		return envVarsResult{envVars: envs}
+	}
+}
+
+func (m Model) deleteEnvVar(key string) tea.Cmd {
+	name := m.appName
+	ic := m.incusClient
+	return func() tea.Msg {
+		if err := ic.DeleteEnvVar(context.Background(), name, key); err != nil {
+			return actionResult{err: err}
+		}
+		envs, _ := ic.GetEnvVars(context.Background(), name)
+		return envVarsResult{envVars: envs}
 	}
 }
