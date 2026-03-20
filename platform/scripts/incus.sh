@@ -132,6 +132,73 @@ HELPER
   echo "${EXISTING:+$EXISTING
 }${CRON_LINE}" | sudo -u incus crontab -
   echo "Credential helper installed with 45-minute token refresh cron"
+
+elif [ "$CLOUD" = "aws" ]; then
+  # Ensure AWS CLI is installed on the host for ECR auth
+  if ! command -v aws &>/dev/null; then
+    echo "Installing AWS CLI for ECR authentication..."
+    install_cloud_cli
+  fi
+
+  if command -v aws &>/dev/null; then
+    # Auto-detect AWS account ID and region
+    AWS_REGION=$(curl -sf -m 2 -X PUT -H "X-aws-ec2-metadata-token-ttl-seconds: 10" \
+      http://169.254.169.254/latest/api/token | \
+      xargs -I{} curl -sf -H "X-aws-ec2-metadata-token: {}" \
+      http://169.254.169.254/latest/meta-data/placement/region 2>/dev/null || echo "")
+
+    if [ -n "$AWS_REGION" ]; then
+      AWS_ACCOUNT=$(curl -sf -m 2 -X PUT -H "X-aws-ec2-metadata-token-ttl-seconds: 10" \
+        http://169.254.169.254/latest/api/token | \
+        xargs -I{} curl -sf -H "X-aws-ec2-metadata-token: {}" \
+        http://169.254.169.254/latest/dynamic/instance-identity/document 2>/dev/null | \
+        python3 -c "import sys,json; print(json.load(sys.stdin)['accountId'])" 2>/dev/null || echo "")
+
+      if [ -n "$AWS_ACCOUNT" ]; then
+        ECR_HOST="${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+        echo "Setting up AWS ECR credential helper for ${ECR_HOST}"
+
+        sudo tee /usr/local/bin/freedb-registry-auth.sh > /dev/null << HELPER
+#!/bin/bash
+# Credential helper for AWS ECR
+# Outputs a valid auth.json — falls back to empty auths if token fetch fails
+TOKEN=\$(aws ecr get-login-password --region ${AWS_REGION} 2>/dev/null || echo "")
+
+if [ -n "\$TOKEN" ]; then
+  AUTH=\$(echo -n "AWS:\${TOKEN}" | base64 -w0)
+  cat << AUTHEOF
+{
+  "auths": {
+    "${ECR_HOST}": {
+      "auth": "\${AUTH}"
+    }
+  }
+}
+AUTHEOF
+else
+  echo '{"auths": {}}'
+fi
+HELPER
+        sudo chmod +x /usr/local/bin/freedb-registry-auth.sh
+
+        /usr/local/bin/freedb-registry-auth.sh | sudo -u incus tee /home/incus/.config/containers/auth.json > /dev/null
+
+        # ECR tokens expire every 12 hours, refresh every 6 hours
+        CRON_LINE="0 */6 * * * /usr/local/bin/freedb-registry-auth.sh > /home/incus/.config/containers/auth.json 2>/dev/null"
+        EXISTING=$(sudo -u incus crontab -l 2>/dev/null | grep -v freedb-registry-auth || true)
+        echo "${EXISTING:+$EXISTING
+}${CRON_LINE}" | sudo -u incus crontab -
+        echo "ECR credential helper installed with 6-hour token refresh cron"
+      else
+        echo "Warning: Could not detect AWS account ID — skipping ECR auth setup"
+      fi
+    else
+      echo "Warning: Could not detect AWS region — skipping ECR auth setup"
+    fi
+  else
+    echo "Warning: AWS CLI not found — skipping ECR auth setup"
+    echo "Install AWS CLI and run the installer again to enable ECR"
+  fi
 else
   echo "No private registry auth needed — using empty auth.json for public registries"
 fi
@@ -182,6 +249,15 @@ if [ "$CLOUD" = "gcp" ]; then
     echo "Remote 'gcr' already exists, skipping"
   else
     sudo incus remote add gcr https://us-central1-docker.pkg.dev --protocol=oci
+  fi
+fi
+
+# Add AWS ECR remote if configured
+if [ "$CLOUD" = "aws" ] && [ -n "${ECR_HOST:-}" ]; then
+  if sudo incus remote list -f csv | cut -d',' -f1 | grep -qx "ecr"; then
+    echo "Remote 'ecr' already exists, skipping"
+  else
+    sudo incus remote add ecr "https://${ECR_HOST}" --protocol=oci
   fi
 fi
 
