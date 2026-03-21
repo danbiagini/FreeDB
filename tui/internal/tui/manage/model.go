@@ -3,6 +3,7 @@ package manage
 import (
 	"context"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -43,6 +44,8 @@ type logsResult struct {
 	err     error
 }
 
+type logTickMsg time.Time
+
 type detailResult struct {
 	detail *incus.ContainerDetail
 	err    error
@@ -62,6 +65,8 @@ type Model struct {
 	subview     subview
 	viewport    viewport.Model
 	detail      *incus.ContainerDetail
+	logFollow   bool   // auto-scroll to bottom
+	logContent  string // current log content for detecting changes
 	message     string
 	err         error
 	done        bool
@@ -165,7 +170,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.subview = subviewLogs
-		m.viewport.SetContent(msg.content)
+		if msg.content != m.logContent {
+			m.logContent = msg.content
+			m.viewport.SetContent(msg.content)
+			if m.logFollow {
+				m.viewport.GotoBottom()
+			}
+		}
+		if m.logFollow {
+			return m, m.logTick()
+		}
+		return m, nil
+
+	case logTickMsg:
+		if m.subview == subviewLogs && m.logFollow {
+			return m, m.fetchLogs()
+		}
 		return m, nil
 
 	case tea.KeyMsg:
@@ -191,8 +211,21 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch m.subview {
 	case subviewLogs:
 		if key == "esc" || key == "q" {
+			m.logFollow = false
 			m.subview = subviewMenu
 			return m, nil
+		}
+		if key == "f" {
+			m.logFollow = !m.logFollow
+			if m.logFollow {
+				m.viewport.GotoBottom()
+				return m, m.fetchLogs()
+			}
+			return m, nil
+		}
+		// Manual scrolling disables follow
+		if key == "up" || key == "down" || key == "pgup" || key == "pgdown" {
+			m.logFollow = false
 		}
 		var cmd tea.Cmd
 		m.viewport, cmd = m.viewport.Update(msg)
@@ -292,6 +325,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "l":
 			m.busy = true
 			m.message = ""
+			m.logFollow = true
+			m.logContent = ""
 			return m, m.fetchLogs()
 
 		case "e":
@@ -436,7 +471,11 @@ func (m Model) View() string {
 		b.WriteString("\n")
 		b.WriteString(m.viewport.View())
 		b.WriteString("\n")
-		b.WriteString(dimStyle.Render("[esc] Back  [↑↓] Scroll"))
+		followStatus := "[f] Follow: off"
+		if m.logFollow {
+			followStatus = "[f] Follow: on"
+		}
+		b.WriteString(dimStyle.Render(fmt.Sprintf("[esc] Back  [↑↓] Scroll  %s", followStatus)))
 		return b.String()
 	}
 
@@ -749,23 +788,40 @@ func (m Model) restartService() tea.Cmd {
 	}
 }
 
+func (m Model) logTick() tea.Cmd {
+	return tea.Tick(2*time.Second, func(t time.Time) tea.Msg {
+		return logTickMsg(t)
+	})
+}
+
 func (m Model) fetchLogs() tea.Cmd {
 	name := m.containerName()
 	ic := m.incusClient
 	return func() tea.Msg {
-		output, err := ic.Exec(context.Background(), name, []string{
+		ctx := context.Background()
+
+		// Try journalctl first (system containers with systemd)
+		if output, err := ic.Exec(ctx, name, []string{
 			"journalctl", "-n", "200", "--no-pager", "--no-hostname",
-		})
-		if err != nil {
-			// Fallback: try syslog
-			output, err = ic.Exec(context.Background(), name, []string{
-				"tail", "-n", "200", "/var/log/syslog",
-			})
-			if err != nil {
-				return logsResult{err: fmt.Errorf("could not fetch logs: %w", err)}
-			}
+		}); err == nil && strings.TrimSpace(output) != "" {
+			return logsResult{content: output}
 		}
-		return logsResult{content: output}
+
+		// For OCI containers: read the host-side console log
+		// This is where Incus captures stdout/stderr from the container's init process
+		consolePath := fmt.Sprintf("/var/log/incus/%s/console.log", name)
+		if data, err := os.ReadFile(consolePath); err == nil && len(data) > 0 {
+			return logsResult{content: string(data)}
+		}
+
+		// Try syslog as last resort
+		if output, err := ic.Exec(ctx, name, []string{
+			"tail", "-n", "200", "/var/log/syslog",
+		}); err == nil && strings.TrimSpace(output) != "" {
+			return logsResult{content: output}
+		}
+
+		return logsResult{content: "(no logs available — OCI containers log to /var/log/incus/<name>/console.log on the host)"}
 	}
 }
 
