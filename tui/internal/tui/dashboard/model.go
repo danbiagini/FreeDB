@@ -33,6 +33,7 @@ var (
 
 type containerData struct {
 	info       incus.ContainerInfo
+	appName    string // display name (may differ from container name after updates)
 	domain     string
 	image      string
 	isApp      bool
@@ -167,7 +168,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				reqs := "—"
 				errPct := "—"
 				if msg.metrics != nil {
-					if sm, ok := msg.metrics[cd.info.Name]; ok && sm.TotalReqs > 0 {
+					if sm, ok := msg.metrics[cd.appName]; ok && sm.TotalReqs > 0 {
 						reqs = formatReqs(sm.TotalReqs)
 						pct := (sm.ErrorReqs / sm.TotalReqs) * 100
 						if pct > 0 {
@@ -179,7 +180,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 
 				rows = append(rows, table.Row{
-					cd.info.Name,
+					cd.appName,
 					cd.info.Status,
 					cd.image,
 					cd.domain,
@@ -305,11 +306,13 @@ func (m Model) refresh() tea.Cmd {
 		})
 
 		for _, c := range containers {
+			displayName := c.Name
 			domain := "—"
 			image := "—"
 			isApp := false
 			if app, ok := registeredApps[c.Name]; ok {
 				isApp = true
+				displayName = app.Name // use app name, not container name
 				domain = app.Domain
 				img := app.Image
 				if parts := strings.Split(img, "/"); len(parts) > 1 {
@@ -328,8 +331,9 @@ func (m Model) refresh() tea.Cmd {
 
 			cpuReadings[c.Name] = c.CPUSeconds
 			data = append(data, containerData{
-				info:   c,
-				domain: domain,
+				info:    c,
+				appName: displayName,
+				domain:  domain,
 				image:  image,
 				isApp:  isApp,
 			})
