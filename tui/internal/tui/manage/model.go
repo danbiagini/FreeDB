@@ -30,6 +30,7 @@ const (
 	subviewEnvVars
 	subviewEnvVarAdd
 	subviewEnvVarConfirmDelete
+	subviewEnvVarRestartPrompt
 )
 
 type actionResult struct {
@@ -69,6 +70,7 @@ type Model struct {
 	updateInput textinput.Model
 	updateImage string // resolved image with new tag
 	// Env var editor
+	envModified bool
 	envVars     map[string]string
 	envKeys     []string // sorted keys for display
 	envSelected int
@@ -327,9 +329,27 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+	case subviewEnvVarRestartPrompt:
+		switch key {
+		case "y":
+			m.envModified = false
+			m.busy = true
+			m.subview = subviewMenu
+			return m, m.restartApp()
+		case "n", "esc":
+			m.envModified = false
+			m.subview = subviewMenu
+			return m, nil
+		}
+		return m, nil
+
 	case subviewEnvVars:
 		switch key {
 		case "esc":
+			if m.envModified {
+				m.subview = subviewEnvVarRestartPrompt
+				return m, nil
+			}
 			m.subview = subviewMenu
 			return m, nil
 		case "a":
@@ -375,6 +395,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			parts := strings.SplitN(val, "=", 2)
 			m.busy = true
 			m.err = nil
+			m.envModified = true
 			return m, m.setEnvVar(parts[0], parts[1])
 		}
 		var cmd tea.Cmd
@@ -386,6 +407,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "y":
 			if m.envSelected < len(m.envKeys) {
 				m.busy = true
+				m.envModified = true
 				return m, m.deleteEnvVar(m.envKeys[m.envSelected])
 			}
 			m.subview = subviewEnvVars
@@ -414,6 +436,15 @@ func (m Model) View() string {
 		b.WriteString(m.viewport.View())
 		b.WriteString("\n")
 		b.WriteString(dimStyle.Render("[esc] Back  [↑↓] Scroll"))
+		return b.String()
+	}
+
+	if m.subview == subviewEnvVarRestartPrompt {
+		b.WriteString(titleStyle.Render(fmt.Sprintf("Environment: %s", m.appName)))
+		b.WriteString("\n\n")
+		b.WriteString("  Environment variables were modified.\n")
+		b.WriteString("  Restart container for changes to take effect?\n\n")
+		b.WriteString("  [y] Yes  [n] No\n")
 		return b.String()
 	}
 
