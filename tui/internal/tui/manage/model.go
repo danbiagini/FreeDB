@@ -3,6 +3,7 @@ package manage
 import (
 	"context"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -753,19 +754,30 @@ func (m Model) fetchLogs() tea.Cmd {
 	name := m.containerName()
 	ic := m.incusClient
 	return func() tea.Msg {
-		output, err := ic.Exec(context.Background(), name, []string{
+		ctx := context.Background()
+
+		// Try journalctl first (system containers with systemd)
+		if output, err := ic.Exec(ctx, name, []string{
 			"journalctl", "-n", "200", "--no-pager", "--no-hostname",
-		})
-		if err != nil {
-			// Fallback: try syslog
-			output, err = ic.Exec(context.Background(), name, []string{
-				"tail", "-n", "200", "/var/log/syslog",
-			})
-			if err != nil {
-				return logsResult{err: fmt.Errorf("could not fetch logs: %w", err)}
-			}
+		}); err == nil && strings.TrimSpace(output) != "" {
+			return logsResult{content: output}
 		}
-		return logsResult{content: output}
+
+		// For OCI containers: read the host-side console log
+		// This is where Incus captures stdout/stderr from the container's init process
+		consolePath := fmt.Sprintf("/var/log/incus/%s/console.log", name)
+		if data, err := os.ReadFile(consolePath); err == nil && len(data) > 0 {
+			return logsResult{content: string(data)}
+		}
+
+		// Try syslog as last resort
+		if output, err := ic.Exec(ctx, name, []string{
+			"tail", "-n", "200", "/var/log/syslog",
+		}); err == nil && strings.TrimSpace(output) != "" {
+			return logsResult{content: output}
+		}
+
+		return logsResult{content: "(no logs available — OCI containers log to /var/log/incus/<name>/console.log on the host)"}
 	}
 }
 
