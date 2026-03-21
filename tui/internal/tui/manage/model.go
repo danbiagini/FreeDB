@@ -143,6 +143,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			sort.Strings(m.envKeys)
 			m.envSelected = 0
+			m.subview = subviewEnvVars
 		}
 		return m, nil
 
