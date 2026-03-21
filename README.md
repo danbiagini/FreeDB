@@ -157,6 +157,35 @@ FreeDB runs on both GCP and AWS with automatic cloud detection:
 
 See [docs/multi-cloud-design.md](docs/multi-cloud-design.md) for the full design.
 
+## Backups
+
+PostgreSQL is backed up nightly at 3am via a cron job on the host. The backup runs `pg_dumpall` inside the db1 container and pipes the output to the host, then uploads to cloud storage.
+
+Backups are stored at:
+- **Local**: `/var/lib/freedb/backups/` (30-day retention)
+- **Cloud**: `gs://BUCKET/HOSTNAME/` (GCP) or `s3://BUCKET/HOSTNAME/` (AWS)
+
+### Configuration
+
+Backup settings are in `/opt/freedb/backup.env`:
+
+```bash
+FREEDB_BACKUP_BUCKET=freedb-backup    # cloud storage bucket name
+FREEDB_DB_CONTAINER=db1               # incus container running PostgreSQL
+```
+
+To customize the bucket name during install:
+```bash
+FREEDB_BACKUP_BUCKET=my-custom-bucket curl -fsSL https://raw.githubusercontent.com/danbiagini/FreeDB/main/install.sh | bash
+```
+
+### Manual backup
+
+```bash
+sudo /opt/freedb/backup-db.sh              # full backup (pg_dumpall)
+sudo /opt/freedb/backup-db.sh mydb         # single database backup
+```
+
 ## App Examples
 
 The `apps/` directory contains example app configurations:
