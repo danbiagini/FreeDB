@@ -286,6 +286,9 @@ func (m Model) refresh() tea.Cmd {
 		registeredApps := make(map[string]*registry.App)
 		for _, app := range m.registry.List() {
 			registeredApps[app.Name] = app
+			if app.ContainerName != "" {
+				registeredApps[app.ContainerName] = app
+			}
 		}
 
 		cpuReadings := make(map[string]float64)
