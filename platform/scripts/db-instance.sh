@@ -48,36 +48,18 @@ EOF"
 # Restart postgres to pick up config changes
 sudo incus exec db1 -- systemctl restart postgresql
 
-# setup nightly pg_dump cron job
-sudo incus exec db1 -- sudo -u postgres mkdir -p /var/lib/postgresql/backups
-sudo incus exec db1 -- sudo -u postgres mkdir -p /var/lib/postgresql/tools
+# Setup nightly backup — runs on the HOST (not inside db1)
+# The host has cloud CLI with working IAM credentials for uploading to cloud storage
+sudo mkdir -p /opt/freedb /var/lib/freedb/backups
+sudo cp "${REPO_ROOT}/ops/backup-db.sh" /opt/freedb/backup-db.sh
+sudo chmod +x /opt/freedb/backup-db.sh
 
-# Push backup script and cron file directly instead of cloning the whole repo
-sudo incus file push "${REPO_ROOT}/ops/backup-db.sh" db1/var/lib/postgresql/tools/
-sudo incus exec db1 -- chmod +x /var/lib/postgresql/tools/backup-db.sh
-sudo incus file push "${REPO_ROOT}/ops/db1.cron" db1/var/lib/postgresql/tools/
-
-# Install cloud CLI inside db1 for backup uploads
-sudo incus exec db1 -- sh -c 'echo "Acquire::ForceIPv4 \"true\";" > /etc/apt/apt.conf.d/99force-ipv4'
-install_cloud_cli_in_container() {
-  case "$CLOUD" in
-    gcp)
-      sudo incus exec db1 -- sh -c "curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg"
-      sudo incus exec db1 -- sh -c "echo 'deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main' | sudo tee -a /etc/apt/sources.list.d/google-cloud-sdk.list"
-      sudo incus exec db1 -- sh -c "apt-get update && apt-get install -yq google-cloud-cli"
-      ;;
-    aws)
-      sudo incus exec db1 -- apt-get install -yq unzip
-      sudo incus exec db1 -- sh -c 'curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "/tmp/awscliv2.zip" && cd /tmp && unzip -qo awscliv2.zip && ./aws/install && rm -rf aws awscliv2.zip'
-      ;;
-    *)
-      echo "Warning: Unknown cloud, skipping cloud CLI install in db1 — backups to cloud storage will not work"
-      ;;
-  esac
-}
-install_cloud_cli_in_container
-
-sudo incus exec db1 -- sudo -u postgres crontab /var/lib/postgresql/tools/db1.cron
+# Install host-side cron for nightly backups
+CRON_LINE="0 3 * * * /opt/freedb/backup-db.sh 2>&1 | logger -t freedb-backup"
+EXISTING=$(sudo crontab -l 2>/dev/null | grep -v freedb-backup || true)
+echo "${EXISTING:+$EXISTING
+}${CRON_LINE}" | sudo crontab -
+echo "Backup cron installed (runs nightly at 3am on the host)"
 
 echo ""
 echo "================================================================"

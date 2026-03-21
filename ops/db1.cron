@@ -1,2 +1,2 @@
-# Run a full DB backup every day at 3am
-0 3 * * * systemd-cat -t "backup-db" /var/lib/postgresql/tools/backup-db.sh
+# Run a full DB backup every day at 3am (runs on host, not inside container)
+0 3 * * * /opt/freedb/backup-db.sh 2>&1 | logger -t freedb-backup
