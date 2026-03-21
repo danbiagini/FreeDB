@@ -54,8 +54,16 @@ sudo mkdir -p /opt/freedb /var/lib/freedb/backups
 sudo cp "${REPO_ROOT}/ops/backup-db.sh" /opt/freedb/backup-db.sh
 sudo chmod +x /opt/freedb/backup-db.sh
 
-# Install host-side cron for nightly backups
-CRON_LINE="0 3 * * * /opt/freedb/backup-db.sh 2>&1 | logger -t freedb-backup"
+# Write backup config with environment-specific values
+BACKUP_BUCKET="${FREEDB_BACKUP_BUCKET:-freedb-backup}"
+sudo tee /opt/freedb/backup.env > /dev/null << EOF
+FREEDB_BACKUP_BUCKET=${BACKUP_BUCKET}
+FREEDB_DB_CONTAINER=db1
+EOF
+echo "Backup config: bucket=${BACKUP_BUCKET}, container=db1"
+
+# Install host-side cron for nightly backups (sources config before running)
+CRON_LINE="0 3 * * * . /opt/freedb/backup.env && /opt/freedb/backup-db.sh 2>&1 | logger -t freedb-backup"
 EXISTING=$(sudo crontab -l 2>/dev/null | grep -v freedb-backup || true)
 echo "${EXISTING:+$EXISTING
 }${CRON_LINE}" | sudo crontab -
