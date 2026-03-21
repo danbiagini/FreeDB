@@ -25,9 +25,12 @@ const (
 	subviewLogs
 	subviewConfirmRestart
 	subviewConfirmDelete
+	subviewUpdateTag
+	subviewConfirmUpdate
 	subviewEnvVars
 	subviewEnvVarAdd
 	subviewEnvVarConfirmDelete
+	subviewEnvVarRestartPrompt
 )
 
 type actionResult struct {
@@ -63,7 +66,11 @@ type Model struct {
 	err         error
 	done        bool
 	busy        bool
+	// Update
+	updateInput textinput.Model
+	updateImage string // resolved image with new tag
 	// Env var editor
+	envModified bool
 	envVars     map[string]string
 	envKeys     []string // sorted keys for display
 	envSelected int
@@ -92,12 +99,20 @@ func NewModel(appName string, app *registry.App, isSystem bool, ic *incus.Client
 
 func (m Model) Done() bool { return m.done }
 
+// containerName returns the actual incus container name (may differ from app name after updates)
+func (m Model) containerName() string {
+	if m.app != nil && m.app.ContainerName != "" {
+		return m.app.ContainerName
+	}
+	return m.appName
+}
+
 func (m Model) Init() tea.Cmd {
 	return m.fetchDetail()
 }
 
 func (m Model) fetchDetail() tea.Cmd {
-	name := m.appName
+	name := m.containerName()
 	ic := m.incusClient
 	return func() tea.Msg {
 		detail, err := ic.GetContainerDetail(context.Background(), name)
@@ -128,6 +143,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			sort.Strings(m.envKeys)
 			m.envSelected = 0
+			m.subview = subviewEnvVars
 		}
 		return m, nil
 
@@ -198,6 +214,45 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case subviewUpdateTag:
+		switch key {
+		case "esc":
+			m.subview = subviewMenu
+			return m, nil
+		case "enter":
+			tag := strings.TrimSpace(m.updateInput.Value())
+			if tag == "" {
+				tag = "latest"
+			}
+			// Build the new image ref with the chosen tag
+			img := m.app.Image
+			// Strip old tag
+			if idx := strings.LastIndex(img, ":"); idx > 0 {
+				after := img[idx+1:]
+				if !strings.Contains(after, "/") {
+					img = img[:idx]
+				}
+			}
+			m.updateImage = img + ":" + tag
+			m.subview = subviewConfirmUpdate
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.updateInput, cmd = m.updateInput.Update(msg)
+		return m, cmd
+
+	case subviewConfirmUpdate:
+		switch key {
+		case "y":
+			m.busy = true
+			m.subview = subviewMenu
+			return m, m.updateApp(m.updateImage)
+		case "n", "esc":
+			m.subview = subviewMenu
+			return m, nil
+		}
+		return m, nil
+
 	case subviewConfirmDelete:
 		switch key {
 		case "y":
@@ -245,6 +300,28 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.err = nil
 			return m, m.fetchEnvVars()
 
+		case "u":
+			if m.isSystem || m.app == nil {
+				return m, nil
+			}
+			// Extract current tag from image ref
+			currentTag := "latest"
+			img := m.app.Image
+			if idx := strings.LastIndex(img, ":"); idx > 0 {
+				// Make sure : is a tag separator not a remote separator
+				after := img[idx+1:]
+				if !strings.Contains(after, "/") {
+					currentTag = after
+				}
+			}
+			m.updateInput = textinput.New()
+			m.updateInput.SetValue(currentTag)
+			m.updateInput.Focus()
+			m.updateInput.CharLimit = 50
+			m.subview = subviewUpdateTag
+			m.err = nil
+			return m, textinput.Blink
+
 		case "d":
 			if m.isSystem {
 				return m, nil
@@ -253,9 +330,27 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+	case subviewEnvVarRestartPrompt:
+		switch key {
+		case "y":
+			m.envModified = false
+			m.busy = true
+			m.subview = subviewMenu
+			return m, m.restartApp()
+		case "n", "esc":
+			m.envModified = false
+			m.subview = subviewMenu
+			return m, nil
+		}
+		return m, nil
+
 	case subviewEnvVars:
 		switch key {
 		case "esc":
+			if m.envModified {
+				m.subview = subviewEnvVarRestartPrompt
+				return m, nil
+			}
 			m.subview = subviewMenu
 			return m, nil
 		case "a":
@@ -301,6 +396,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			parts := strings.SplitN(val, "=", 2)
 			m.busy = true
 			m.err = nil
+			m.envModified = true
 			return m, m.setEnvVar(parts[0], parts[1])
 		}
 		var cmd tea.Cmd
@@ -312,6 +408,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "y":
 			if m.envSelected < len(m.envKeys) {
 				m.busy = true
+				m.envModified = true
 				return m, m.deleteEnvVar(m.envKeys[m.envSelected])
 			}
 			m.subview = subviewEnvVars
@@ -340,6 +437,15 @@ func (m Model) View() string {
 		b.WriteString(m.viewport.View())
 		b.WriteString("\n")
 		b.WriteString(dimStyle.Render("[esc] Back  [↑↓] Scroll"))
+		return b.String()
+	}
+
+	if m.subview == subviewEnvVarRestartPrompt {
+		b.WriteString(titleStyle.Render(fmt.Sprintf("Environment: %s", m.appName)))
+		b.WriteString("\n\n")
+		b.WriteString("  Environment variables were modified.\n")
+		b.WriteString("  Restart container for changes to take effect?\n\n")
+		b.WriteString("  [y] Yes  [n] No\n")
 		return b.String()
 	}
 
@@ -441,6 +547,29 @@ func (m Model) View() string {
 		return b.String()
 	}
 
+	if m.subview == subviewUpdateTag {
+		b.WriteString(fmt.Sprintf("  Update %s\n\n", m.appName))
+		b.WriteString(dimStyle.Render(fmt.Sprintf("  Current image: %s\n", m.app.Image)))
+		b.WriteString(fmt.Sprintf("  Tag: %s\n", m.updateInput.View()))
+		b.WriteString(dimStyle.Render("\n  [enter] Continue  [esc] Cancel"))
+		return b.String()
+	}
+
+	if m.subview == subviewConfirmUpdate {
+		b.WriteString(fmt.Sprintf("  Update %s?\n\n", m.appName))
+		b.WriteString(fmt.Sprintf("  Image: %s\n", m.updateImage))
+		b.WriteString("\n")
+		b.WriteString("  This will:\n")
+		b.WriteString("    1. Pull fresh image from registry\n")
+		b.WriteString("    2. Launch new container alongside the current one\n")
+		b.WriteString("    3. Restore environment variables\n")
+		b.WriteString("    4. Switch Traefik route to new container (zero downtime)\n")
+		b.WriteString("    5. Remove old container\n")
+		b.WriteString("\n")
+		b.WriteString("  [y] Yes  [n] No\n")
+		return b.String()
+	}
+
 	if m.subview == subviewConfirmDelete {
 		b.WriteString(warnStyle.Render("  Delete this app? This removes the container, Traefik route,"))
 		b.WriteString("\n")
@@ -468,7 +597,7 @@ func (m Model) View() string {
 	if m.isSystem {
 		b.WriteString(dimStyle.Render("  [s] Stop  [t] Start  [r] Restart  [l] Logs  [e] Env  [esc] Back"))
 	} else {
-		b.WriteString(dimStyle.Render("  [s] Stop  [t] Start  [r] Restart  [l] Logs  [e] Env  [d] Delete  [esc] Back"))
+		b.WriteString(dimStyle.Render("  [s] Stop  [t] Start  [r] Restart  [u] Update  [l] Logs  [e] Env  [d] Delete  [esc] Back"))
 	}
 
 	return b.String()
@@ -506,7 +635,7 @@ func formatBytes(b int64) string {
 }
 
 func (m Model) stopApp() tea.Cmd {
-	name := m.appName
+	name := m.containerName()
 	ic := m.incusClient
 	return func() tea.Msg {
 		err := ic.StopContainer(context.Background(), name)
@@ -518,7 +647,7 @@ func (m Model) stopApp() tea.Cmd {
 }
 
 func (m Model) startApp() tea.Cmd {
-	name := m.appName
+	name := m.containerName()
 	ic := m.incusClient
 	app := m.app
 	reg := m.registry
@@ -542,7 +671,7 @@ func (m Model) startApp() tea.Cmd {
 }
 
 func (m Model) restartApp() tea.Cmd {
-	name := m.appName
+	name := m.containerName()
 	ic := m.incusClient
 	app := m.app
 	reg := m.registry
@@ -566,7 +695,7 @@ func (m Model) restartApp() tea.Cmd {
 }
 
 func (m Model) restartService() tea.Cmd {
-	name := m.appName
+	name := m.containerName()
 	ic := m.incusClient
 	return func() tea.Msg {
 		ctx := context.Background()
@@ -621,7 +750,7 @@ func (m Model) restartService() tea.Cmd {
 }
 
 func (m Model) fetchLogs() tea.Cmd {
-	name := m.appName
+	name := m.containerName()
 	ic := m.incusClient
 	return func() tea.Msg {
 		output, err := ic.Exec(context.Background(), name, []string{
@@ -642,6 +771,7 @@ func (m Model) fetchLogs() tea.Cmd {
 
 func (m Model) deleteApp() tea.Cmd {
 	name := m.appName
+	cName := m.containerName()
 	app := m.app
 	ic := m.incusClient
 	reg := m.registry
@@ -649,7 +779,7 @@ func (m Model) deleteApp() tea.Cmd {
 		ctx := context.Background()
 
 		// Delete container
-		if err := ic.DeleteContainer(ctx, name); err != nil {
+		if err := ic.DeleteContainer(ctx, cName); err != nil {
 			return actionResult{err: fmt.Errorf("deleting container: %w", err)}
 		}
 
@@ -670,8 +800,78 @@ func (m Model) deleteApp() tea.Cmd {
 	}
 }
 
-func (m Model) fetchEnvVars() tea.Cmd {
+func (m Model) updateApp(image string) tea.Cmd {
 	name := m.appName
+	app := m.app
+	ic := m.incusClient
+	reg := m.registry
+	return func() tea.Msg {
+		if app == nil {
+			return actionResult{err: fmt.Errorf("no app config found")}
+		}
+
+		ctx := context.Background()
+		timestamp := time.Now().Format("0102-1504") // MMDD-HHMM
+		newName := name + "-" + timestamp
+
+		// Resolve the actual container name (may differ from app name after previous updates)
+		oldContainerName := name
+		if app.ContainerName != "" {
+			oldContainerName = app.ContainerName
+		}
+
+		// 1. Save env vars from the old container
+		envVars, err := ic.GetEnvVars(ctx, oldContainerName)
+		if err != nil {
+			envVars = make(map[string]string) // continue without env vars
+		}
+
+		// 2. Delete cached image to force a fresh pull
+		_ = ic.DeleteCachedImage(ctx, image)
+
+		// 3. Launch new container from the fresh image
+		if err := ic.LaunchOCI(ctx, newName, image); err != nil {
+			return actionResult{err: fmt.Errorf("launching new container: %w", err)}
+		}
+
+		// 3. Wait for IP on the new container
+		newIP, err := ic.WaitForIP(ctx, newName, 30*time.Second)
+		if err != nil {
+			// Cleanup: delete the new container
+			_ = ic.DeleteContainer(ctx, newName)
+			return actionResult{err: fmt.Errorf("new container failed to get IP: %w", err)}
+		}
+
+		// 4. Restore env vars on the new container
+		if len(envVars) > 0 {
+			if err := ic.RestoreEnvVars(ctx, newName, envVars); err != nil {
+				_ = ic.DeleteContainer(ctx, newName)
+				return actionResult{err: fmt.Errorf("restoring env vars: %w", err)}
+			}
+		}
+
+		// 5. Switch Traefik route to the new container (zero-downtime cutover)
+		if app.Domain != "" {
+			if err := traefik.PushRoute(ic, name, app.Domain, newIP, app.Port, app.TLS); err != nil {
+				_ = ic.DeleteContainer(ctx, newName)
+				return actionResult{err: fmt.Errorf("updating route: %w", err)}
+			}
+		}
+
+		// 6. Delete the old container (no longer receiving traffic)
+		_ = ic.DeleteContainer(ctx, oldContainerName)
+
+		// 7. Update registry — keep app name, track new container name
+		_ = reg.UpdateIP(name, newIP)
+		_ = reg.UpdateImage(name, image)
+		_ = reg.UpdateContainerName(name, newName)
+
+		return actionResult{msg: fmt.Sprintf("Updated to %s", image)}
+	}
+}
+
+func (m Model) fetchEnvVars() tea.Cmd {
+	name := m.containerName()
 	ic := m.incusClient
 	return func() tea.Msg {
 		envs, err := ic.GetEnvVars(context.Background(), name)
@@ -680,7 +880,7 @@ func (m Model) fetchEnvVars() tea.Cmd {
 }
 
 func (m Model) setEnvVar(key, value string) tea.Cmd {
-	name := m.appName
+	name := m.containerName()
 	ic := m.incusClient
 	return func() tea.Msg {
 		if err := ic.SetEnvVar(context.Background(), name, key, value); err != nil {
@@ -693,7 +893,7 @@ func (m Model) setEnvVar(key, value string) tea.Cmd {
 }
 
 func (m Model) deleteEnvVar(key string) tea.Cmd {
-	name := m.appName
+	name := m.containerName()
 	ic := m.incusClient
 	return func() tea.Msg {
 		if err := ic.DeleteEnvVar(context.Background(), name, key); err != nil {
