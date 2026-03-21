@@ -1,2 +1,0 @@
-# Run a full DB backup every day at 3am (runs on host, not inside container)
-0 3 * * * /opt/freedb/backup-db.sh 2>&1 | logger -t freedb-backup
