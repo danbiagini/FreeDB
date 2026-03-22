@@ -885,20 +885,12 @@ func (m Model) updateApp(image string) tea.Cmd {
 		// 2. Delete cached image to force a fresh pull
 		_ = ic.DeleteCachedImage(ctx, image)
 
-		// 3. Launch new container from the fresh image
-		if err := ic.LaunchOCI(ctx, newName, image); err != nil {
-			return actionResult{err: fmt.Errorf("launching new container: %w", err)}
+		// 3. Create new container WITHOUT starting (need to set env vars first)
+		if err := ic.InitOCI(ctx, newName, image); err != nil {
+			return actionResult{err: fmt.Errorf("creating new container: %w", err)}
 		}
 
-		// 3. Wait for IP on the new container
-		newIP, err := ic.WaitForIP(ctx, newName, 30*time.Second)
-		if err != nil {
-			// Cleanup: delete the new container
-			_ = ic.DeleteContainer(ctx, newName)
-			return actionResult{err: fmt.Errorf("new container failed to get IP: %w", err)}
-		}
-
-		// 4. Restore env vars on the new container
+		// 4. Restore env vars BEFORE starting so the app sees them on boot
 		if len(envVars) > 0 {
 			if err := ic.RestoreEnvVars(ctx, newName, envVars); err != nil {
 				_ = ic.DeleteContainer(ctx, newName)
@@ -906,7 +898,20 @@ func (m Model) updateApp(image string) tea.Cmd {
 			}
 		}
 
-		// 5. Switch Traefik route to the new container (zero-downtime cutover)
+		// 5. Start the container now that env vars are configured
+		if err := ic.StartContainer(ctx, newName); err != nil {
+			_ = ic.DeleteContainer(ctx, newName)
+			return actionResult{err: fmt.Errorf("starting new container: %w", err)}
+		}
+
+		// 6. Wait for IP on the new container
+		newIP, err := ic.WaitForIP(ctx, newName, 30*time.Second)
+		if err != nil {
+			_ = ic.DeleteContainer(ctx, newName)
+			return actionResult{err: fmt.Errorf("new container failed to get IP: %w", err)}
+		}
+
+		// 7. Switch Traefik route to the new container (zero-downtime cutover)
 		if app.Domain != "" {
 			if err := traefik.PushRoute(ic, name, app.Domain, newIP, app.Port, app.TLS); err != nil {
 				_ = ic.DeleteContainer(ctx, newName)
