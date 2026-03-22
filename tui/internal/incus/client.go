@@ -426,6 +426,21 @@ func (c *Client) LaunchOCI(ctx context.Context, name, imageRef string) error {
 	return nil
 }
 
+// InitOCI creates an OCI container without starting it.
+// Use this when you need to configure env vars before the app starts.
+func (c *Client) InitOCI(ctx context.Context, name, imageRef string) error {
+	remote, alias := parseImageRef(imageRef)
+	ref := fmt.Sprintf("%s:%s", remote, alias)
+
+	cmd := exec.CommandContext(ctx, "incus", "init", ref, name, "--profile", "default")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("creating %s: %s", name, strings.TrimSpace(string(output)))
+	}
+
+	return nil
+}
+
 func (c *Client) WaitForIP(ctx context.Context, name string, timeout time.Duration) (string, error) {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
