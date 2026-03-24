@@ -422,9 +422,10 @@ func (m Model) deploy() tea.Cmd {
 				}
 			}
 		}
+		// 1. Create container WITHOUT starting (need to set env vars first)
 		if isOCI {
-			if err := ic.LaunchOCI(ctx, name, image); err != nil {
-				return deployResult{err: fmt.Errorf("launching OCI container: %w", err)}
+			if err := ic.InitOCI(ctx, name, image); err != nil {
+				return deployResult{err: fmt.Errorf("creating OCI container: %w", err)}
 			}
 		} else {
 			if err := ic.LaunchContainer(ctx, name, image); err != nil {
@@ -432,18 +433,7 @@ func (m Model) deploy() tea.Cmd {
 			}
 		}
 
-		// Wait for IP
-		ip, err := ic.WaitForIP(ctx, name, 30*time.Second)
-		if err != nil {
-			return deployResult{err: fmt.Errorf("waiting for IP: %w", err)}
-		}
-
-		// Create Traefik route
-		if err := traefik.PushRoute(ic, name, domain, ip, port, tls); err != nil {
-			return deployResult{err: fmt.Errorf("creating route: %w", err)}
-		}
-
-		// Create database if requested
+		// 2. Create database if requested
 		dbName := ""
 		if needsDB {
 			dbName = name
@@ -458,13 +448,13 @@ func (m Model) deploy() tea.Cmd {
 			}
 			connStr := db.GetDBConnectionString(dbIP, name)
 
-			// Inject DATABASE_URL env var into the container
+			// Inject DATABASE_URL env var BEFORE starting
 			if err := ic.SetEnvVar(ctx, name, dbEnvVar, connStr); err != nil {
 				return deployResult{err: fmt.Errorf("setting %s: %w", dbEnvVar, err)}
 			}
 		}
 
-		// Set additional env vars
+		// 3. Set additional env vars BEFORE starting
 		for _, ev := range envVars {
 			parts := strings.SplitN(ev, "=", 2)
 			if len(parts) == 2 {
@@ -472,6 +462,24 @@ func (m Model) deploy() tea.Cmd {
 					return deployResult{err: fmt.Errorf("setting env %s: %w", parts[0], err)}
 				}
 			}
+		}
+
+		// 4. Start the container now that env vars are configured
+		if isOCI {
+			if err := ic.StartContainer(ctx, name); err != nil {
+				return deployResult{err: fmt.Errorf("starting container: %w", err)}
+			}
+		}
+
+		// 5. Wait for IP
+		ip, err := ic.WaitForIP(ctx, name, 30*time.Second)
+		if err != nil {
+			return deployResult{err: fmt.Errorf("waiting for IP: %w", err)}
+		}
+
+		// 6. Create Traefik route
+		if err := traefik.PushRoute(ic, name, domain, ip, port, tls); err != nil {
+			return deployResult{err: fmt.Errorf("creating route: %w", err)}
 		}
 
 		// Save to registry
