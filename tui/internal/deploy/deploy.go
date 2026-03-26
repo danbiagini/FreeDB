@@ -10,7 +10,6 @@ import (
 
 	"github.com/danbiagini/freedb-tui/internal/incus"
 	"github.com/danbiagini/freedb-tui/internal/registry"
-	"github.com/danbiagini/freedb-tui/internal/traefik"
 )
 
 type Result struct {
@@ -25,10 +24,29 @@ type Result struct {
 
 type Options struct {
 	AppName string
-	Image   string // full image ref (e.g., ecr:myapp:v1.2.3)
-	Tag     string // just the tag (uses existing image base)
+	Image   string
+	Tag     string
 	DryRun  bool
 	JSON    bool
+}
+
+// ResolveImage determines the full image ref from Options and the existing app config
+func ResolveImage(opts Options, app *registry.App) (string, error) {
+	image := opts.Image
+	if image == "" && opts.Tag != "" {
+		img := app.Image
+		if idx := strings.LastIndex(img, ":"); idx > 0 {
+			after := img[idx+1:]
+			if !strings.Contains(after, "/") {
+				img = img[:idx]
+			}
+		}
+		image = img + ":" + opts.Tag
+	}
+	if image == "" {
+		return "", fmt.Errorf("either --image or --tag is required")
+	}
+	return image, nil
 }
 
 func Run(opts Options) int {
@@ -68,20 +86,9 @@ func Run(opts Options) int {
 	}
 
 	// Resolve image
-	image := opts.Image
-	if image == "" && opts.Tag != "" {
-		// Use existing image base with new tag
-		img := app.Image
-		if idx := strings.LastIndex(img, ":"); idx > 0 {
-			after := img[idx+1:]
-			if !strings.Contains(after, "/") {
-				img = img[:idx]
-			}
-		}
-		image = img + ":" + opts.Tag
-	}
-	if image == "" {
-		return fail(1, "either --image or --tag is required")
+	image, err := ResolveImage(opts, app)
+	if err != nil {
+		return fail(1, "%v", err)
 	}
 
 	log("Deploying %s with %s...", opts.AppName, image)
@@ -117,76 +124,20 @@ func Run(opts Options) int {
 		return fail(1, "connecting to incus: %v", err)
 	}
 
-	ctx := context.Background()
-	timestamp := time.Now().Format("0102-1504")
-	newName := opts.AppName + "-" + timestamp
-
-	// Resolve actual container name
-	oldContainerName := opts.AppName
-	if app.ContainerName != "" {
-		oldContainerName = app.ContainerName
-	}
-
-	// 1. Save env vars
-	log("  Saving environment variables...")
-	envVars, err := ic.GetEnvVars(ctx, oldContainerName)
+	// Run the update using the shared engine
+	result, err := Update(context.Background(), UpdateParams{
+		AppName:     opts.AppName,
+		Image:       image,
+		App:         app,
+		IncusClient: ic,
+		Registry:    reg,
+		OnProgress: func(msg string) {
+			log("  %s", msg)
+		},
+	})
 	if err != nil {
-		envVars = make(map[string]string)
+		return fail(1, "%v", err)
 	}
-	log("  Found %d environment variables", len(envVars))
-
-	// 2. Delete cached image
-	log("  Clearing image cache...")
-	_ = ic.DeleteCachedImage(ctx, image)
-
-	// 3. Create container without starting
-	log("  Pulling image and creating container %s...", newName)
-	if err := ic.InitOCI(ctx, newName, image); err != nil {
-		return fail(1, "creating container: %v", err)
-	}
-
-	// 4. Restore env vars before starting
-	if len(envVars) > 0 {
-		log("  Restoring environment variables...")
-		if err := ic.RestoreEnvVars(ctx, newName, envVars); err != nil {
-			_ = ic.DeleteContainer(ctx, newName)
-			return fail(1, "restoring env vars: %v", err)
-		}
-	}
-
-	// 5. Start container
-	log("  Starting container...")
-	if err := ic.StartContainer(ctx, newName); err != nil {
-		_ = ic.DeleteContainer(ctx, newName)
-		return fail(1, "starting container: %v", err)
-	}
-
-	// 6. Wait for IP
-	log("  Waiting for IP...")
-	newIP, err := ic.WaitForIP(ctx, newName, 30*time.Second)
-	if err != nil {
-		_ = ic.DeleteContainer(ctx, newName)
-		return fail(1, "waiting for IP: %v", err)
-	}
-	log("  Container running at %s", newIP)
-
-	// 7. Switch Traefik route
-	if app.Domain != "" {
-		log("  Switching Traefik route...")
-		if err := traefik.PushRoute(ic, opts.AppName, app.Domain, newIP, app.Port, app.TLS); err != nil {
-			_ = ic.DeleteContainer(ctx, newName)
-			return fail(1, "updating route: %v", err)
-		}
-	}
-
-	// 8. Delete old container
-	log("  Removing old container %s...", oldContainerName)
-	_ = ic.DeleteContainer(ctx, oldContainerName)
-
-	// 9. Update registry
-	_ = reg.UpdateIP(opts.AppName, newIP)
-	_ = reg.UpdateImage(opts.AppName, image)
-	_ = reg.UpdateContainerName(opts.AppName, newName)
 
 	duration := time.Since(start)
 	log("  Done in %s.", duration.Truncate(time.Millisecond))
@@ -196,8 +147,8 @@ func Run(opts Options) int {
 			Status:     "ok",
 			App:        opts.AppName,
 			Image:      image,
-			Container:  newName,
-			IP:         newIP,
+			Container:  result.NewContainer,
+			IP:         result.NewIP,
 			DurationMs: duration.Milliseconds(),
 		}
 		json.NewEncoder(os.Stdout).Encode(r)

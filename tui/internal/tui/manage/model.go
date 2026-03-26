@@ -14,6 +14,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/danbiagini/freedb-tui/internal/db"
+	"github.com/danbiagini/freedb-tui/internal/deploy"
 	"github.com/danbiagini/freedb-tui/internal/incus"
 	"github.com/danbiagini/freedb-tui/internal/registry"
 	"github.com/danbiagini/freedb-tui/internal/traefik"
@@ -866,68 +867,18 @@ func (m Model) updateApp(image string) tea.Cmd {
 			return actionResult{err: fmt.Errorf("no app config found")}
 		}
 
-		ctx := context.Background()
-		timestamp := time.Now().Format("0102-1504") // MMDD-HHMM
-		newName := name + "-" + timestamp
-
-		// Resolve the actual container name (may differ from app name after previous updates)
-		oldContainerName := name
-		if app.ContainerName != "" {
-			oldContainerName = app.ContainerName
-		}
-
-		// 1. Save env vars from the old container
-		envVars, err := ic.GetEnvVars(ctx, oldContainerName)
+		result, err := deploy.Update(context.Background(), deploy.UpdateParams{
+			AppName:     name,
+			Image:       image,
+			App:         app,
+			IncusClient: ic,
+			Registry:    reg,
+		})
 		if err != nil {
-			envVars = make(map[string]string) // continue without env vars
+			return actionResult{err: err}
 		}
 
-		// 2. Delete cached image to force a fresh pull
-		_ = ic.DeleteCachedImage(ctx, image)
-
-		// 3. Create new container WITHOUT starting (need to set env vars first)
-		if err := ic.InitOCI(ctx, newName, image); err != nil {
-			return actionResult{err: fmt.Errorf("creating new container: %w", err)}
-		}
-
-		// 4. Restore env vars BEFORE starting so the app sees them on boot
-		if len(envVars) > 0 {
-			if err := ic.RestoreEnvVars(ctx, newName, envVars); err != nil {
-				_ = ic.DeleteContainer(ctx, newName)
-				return actionResult{err: fmt.Errorf("restoring env vars: %w", err)}
-			}
-		}
-
-		// 5. Start the container now that env vars are configured
-		if err := ic.StartContainer(ctx, newName); err != nil {
-			_ = ic.DeleteContainer(ctx, newName)
-			return actionResult{err: fmt.Errorf("starting new container: %w", err)}
-		}
-
-		// 6. Wait for IP on the new container
-		newIP, err := ic.WaitForIP(ctx, newName, 30*time.Second)
-		if err != nil {
-			_ = ic.DeleteContainer(ctx, newName)
-			return actionResult{err: fmt.Errorf("new container failed to get IP: %w", err)}
-		}
-
-		// 7. Switch Traefik route to the new container (zero-downtime cutover)
-		if app.Domain != "" {
-			if err := traefik.PushRoute(ic, name, app.Domain, newIP, app.Port, app.TLS); err != nil {
-				_ = ic.DeleteContainer(ctx, newName)
-				return actionResult{err: fmt.Errorf("updating route: %w", err)}
-			}
-		}
-
-		// 6. Delete the old container (no longer receiving traffic)
-		_ = ic.DeleteContainer(ctx, oldContainerName)
-
-		// 7. Update registry — keep app name, track new container name
-		_ = reg.UpdateIP(name, newIP)
-		_ = reg.UpdateImage(name, image)
-		_ = reg.UpdateContainerName(name, newName)
-
-		return actionResult{msg: fmt.Sprintf("Updated to %s", image)}
+		return actionResult{msg: fmt.Sprintf("Updated to %s (%s)", image, result.NewContainer)}
 	}
 }
 

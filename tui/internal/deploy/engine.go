@@ -1,0 +1,118 @@
+package deploy
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/danbiagini/freedb-tui/internal/incus"
+	"github.com/danbiagini/freedb-tui/internal/registry"
+	"github.com/danbiagini/freedb-tui/internal/traefik"
+)
+
+// UpdateParams contains everything needed to perform a zero-downtime update
+type UpdateParams struct {
+	AppName          string
+	Image            string
+	App              *registry.App
+	IncusClient      *incus.Client
+	Registry         *registry.AppRegistry
+	OnProgress       func(msg string) // optional progress callback
+}
+
+// UpdateResult contains the outcome of an update
+type UpdateResult struct {
+	NewContainer string
+	NewIP        string
+}
+
+// Update performs a zero-downtime blue-green deployment.
+// This is the shared core logic used by both the TUI and CLI.
+func Update(ctx context.Context, params UpdateParams) (*UpdateResult, error) {
+	ic := params.IncusClient
+	app := params.App
+	reg := params.Registry
+	name := params.AppName
+	image := params.Image
+
+	progress := func(msg string) {
+		if params.OnProgress != nil {
+			params.OnProgress(msg)
+		}
+	}
+
+	timestamp := time.Now().Format("0102-1504")
+	newName := name + "-" + timestamp
+
+	// Resolve actual container name
+	oldContainerName := name
+	if app.ContainerName != "" {
+		oldContainerName = app.ContainerName
+	}
+
+	// 1. Save env vars
+	progress("Saving environment variables...")
+	envVars, err := ic.GetEnvVars(ctx, oldContainerName)
+	if err != nil {
+		envVars = make(map[string]string)
+	}
+	progress(fmt.Sprintf("Found %d environment variables", len(envVars)))
+
+	// 2. Delete cached image
+	progress("Clearing image cache...")
+	_ = ic.DeleteCachedImage(ctx, image)
+
+	// 3. Create container without starting
+	progress(fmt.Sprintf("Pulling image and creating container %s...", newName))
+	if err := ic.InitOCI(ctx, newName, image); err != nil {
+		return nil, fmt.Errorf("creating container: %w", err)
+	}
+
+	// 4. Restore env vars before starting
+	if len(envVars) > 0 {
+		progress("Restoring environment variables...")
+		if err := ic.RestoreEnvVars(ctx, newName, envVars); err != nil {
+			_ = ic.DeleteContainer(ctx, newName)
+			return nil, fmt.Errorf("restoring env vars: %w", err)
+		}
+	}
+
+	// 5. Start container
+	progress("Starting container...")
+	if err := ic.StartContainer(ctx, newName); err != nil {
+		_ = ic.DeleteContainer(ctx, newName)
+		return nil, fmt.Errorf("starting container: %w", err)
+	}
+
+	// 6. Wait for IP
+	progress("Waiting for IP...")
+	newIP, err := ic.WaitForIP(ctx, newName, 30*time.Second)
+	if err != nil {
+		_ = ic.DeleteContainer(ctx, newName)
+		return nil, fmt.Errorf("waiting for IP: %w", err)
+	}
+	progress(fmt.Sprintf("Container running at %s", newIP))
+
+	// 7. Switch Traefik route
+	if app.Domain != "" {
+		progress("Switching Traefik route...")
+		if err := traefik.PushRoute(ic, name, app.Domain, newIP, app.Port, app.TLS); err != nil {
+			_ = ic.DeleteContainer(ctx, newName)
+			return nil, fmt.Errorf("updating route: %w", err)
+		}
+	}
+
+	// 8. Delete old container
+	progress(fmt.Sprintf("Removing old container %s...", oldContainerName))
+	_ = ic.DeleteContainer(ctx, oldContainerName)
+
+	// 9. Update registry
+	_ = reg.UpdateIP(name, newIP)
+	_ = reg.UpdateImage(name, image)
+	_ = reg.UpdateContainerName(name, newName)
+
+	return &UpdateResult{
+		NewContainer: newName,
+		NewIP:        newIP,
+	}, nil
+}
