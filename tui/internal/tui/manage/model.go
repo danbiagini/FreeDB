@@ -867,6 +867,12 @@ func (m Model) updateApp(image string) tea.Cmd {
 			return actionResult{err: fmt.Errorf("no app config found")}
 		}
 
+		lock, err := deploy.AcquireLock()
+		if err != nil {
+			return actionResult{err: fmt.Errorf("another deploy in progress: %w", err)}
+		}
+		defer lock.Release()
+
 		result, err := deploy.Update(context.Background(), deploy.UpdateParams{
 			AppName:     name,
 			Image:       image,
