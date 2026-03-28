@@ -3,13 +3,15 @@ package deploy
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
 )
 
-const lockPath = "/var/lib/freedb/deploy.lock"
+var lockPath = "/var/lib/freedb/deploy.lock"
+
 const lockTimeout = 30 * time.Second
 
 type Lock struct {
@@ -20,7 +22,7 @@ type Lock struct {
 // Waits up to 30 seconds for an existing lock to release.
 // Returns the lock (must call Release when done) or an error.
 func AcquireLock() (*Lock, error) {
-	if err := os.MkdirAll("/var/lib/freedb", 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0755); err != nil {
 		return nil, fmt.Errorf("creating lock directory: %w", err)
 	}
 
