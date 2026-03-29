@@ -437,7 +437,8 @@ func (m Model) deploy() tea.Cmd {
 		dbName := ""
 		if needsDB {
 			dbName = name
-			if err := db.CreateDatabase(ctx, ic, name); err != nil {
+			dbPassword, err := db.CreateDatabase(ctx, ic, name)
+			if err != nil {
 				return deployResult{err: fmt.Errorf("creating database: %w", err)}
 			}
 
@@ -446,7 +447,7 @@ func (m Model) deploy() tea.Cmd {
 			if err != nil {
 				dbIP = "db1.incus" // fallback to DNS
 			}
-			connStr := db.GetDBConnectionString(dbIP, name)
+			connStr := db.GetDBConnectionString(dbIP, name, dbPassword)
 
 			// Inject DATABASE_URL env var BEFORE starting
 			if err := ic.SetEnvVar(ctx, name, dbEnvVar, connStr); err != nil {

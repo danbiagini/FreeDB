@@ -18,6 +18,10 @@
 [entryPoints]
   [entryPoints.web]
     address = ":80"
+    # Redirect all HTTP to HTTPS
+    [entryPoints.web.http.redirections.entryPoint]
+      to = "websecure"
+      scheme = "https"
 
   [entryPoints.websecure]
     address = ":443"
@@ -53,6 +57,8 @@
 
 ################################################################
 # API and dashboard configuration
+# Dashboard is only accessible via localhost (SSH tunnel)
+# No network forward on port 8080
 ################################################################
 
 [api]

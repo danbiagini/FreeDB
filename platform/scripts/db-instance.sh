@@ -40,8 +40,8 @@ sudo incus network forward port add incusbr0 "${HOST_INTERNAL_IP}" tcp 5432 "${D
 sudo incus exec db1 -- sudo -u postgres cp "/etc/postgresql/${PG_VERSION}/main/pg_hba.conf" "/etc/postgresql/${PG_VERSION}/main/pg_hba.conf.bak"
 sudo incus exec db1 -- sudo -u postgres sh -c "cat <<EOF >> /etc/postgresql/${PG_VERSION}/main/pg_hba.conf
 
-## FreeDB host system and container connections
-host    all             all             10.0.0.1/24             trust
+## FreeDB host system and container connections (password required)
+host    all             all             10.0.0.1/24             scram-sha-256
 
 EOF"
 
