@@ -75,6 +75,29 @@ func (r *AppRegistry) Get(name string) (*App, bool) {
 	return app, ok
 }
 
+// Reload re-reads the registry from disk, picking up changes made by other processes
+func (r *AppRegistry) Reload() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	data, err := os.ReadFile(r.FilePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+
+	var fresh AppRegistry
+	if err := json.Unmarshal(data, &fresh); err != nil {
+		return err
+	}
+	if fresh.Apps != nil {
+		r.Apps = fresh.Apps
+	}
+	return nil
+}
+
 func (r *AppRegistry) List() []*App {
 	r.mu.Lock()
 	defer r.mu.Unlock()

@@ -279,6 +279,9 @@ func (m Model) refresh() tea.Cmd {
 		// Fetch Traefik metrics (best effort)
 		metrics, _ := traefik.FetchMetrics(m.incusClient, m.cfg.ProxyContainer)
 
+		// Reload registry from disk to pick up changes from CLI deploys
+		_ = m.registry.Reload()
+
 		systemContainers := map[string]bool{
 			m.cfg.ProxyContainer: true,
 			m.cfg.DBContainer:    true,

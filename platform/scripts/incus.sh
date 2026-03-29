@@ -111,6 +111,7 @@ if [ -n "$TOKEN" ]; then
   AUTH=$(echo -n "oauth2accesstoken:${TOKEN}" | base64 -w0)
   cat << AUTHEOF
 {
+  "_updated": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "auths": {
     "us-central1-docker.pkg.dev": {
       "auth": "${AUTH}"
@@ -119,7 +120,7 @@ if [ -n "$TOKEN" ]; then
 }
 AUTHEOF
 else
-  echo '{"auths": {}}'
+  echo "{\"_updated\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\", \"auths\": {}}"
 fi
 HELPER
   sudo chmod +x /usr/local/bin/freedb-registry-auth.sh
@@ -168,6 +169,7 @@ if [ -n "\$TOKEN" ]; then
   AUTH=\$(echo -n "AWS:\${TOKEN}" | base64 -w0)
   cat << AUTHEOF
 {
+  "_updated": "\$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "auths": {
     "${ECR_HOST}": {
       "auth": "\${AUTH}"
@@ -176,7 +178,7 @@ if [ -n "\$TOKEN" ]; then
 }
 AUTHEOF
 else
-  echo '{"auths": {}}'
+  echo "{\"_updated\": \"\$(date -u +%Y-%m-%dT%H:%M:%SZ)\", \"auths\": {}}"
 fi
 HELPER
         sudo chmod +x /usr/local/bin/freedb-registry-auth.sh
