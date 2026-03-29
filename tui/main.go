@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -19,6 +18,7 @@ import (
 	"github.com/danbiagini/freedb-tui/internal/registry"
 	"github.com/danbiagini/freedb-tui/internal/traefik"
 	"github.com/danbiagini/freedb-tui/internal/tui"
+	"github.com/danbiagini/freedb-tui/internal/upgrade"
 )
 
 var version = "dev"
@@ -447,108 +447,12 @@ func runUpgrade(args []string) int {
 			fmt.Println("Usage: sudo freedb upgrade [--dry-run]")
 			fmt.Println()
 			fmt.Println("Run pending platform migrations to upgrade FreeDB.")
+			fmt.Println("Migration scripts are embedded in the binary — no repo clone needed.")
 			return 0
 		}
 	}
 
-	// Read current installed version
-	versionFile := "/etc/freedb/version"
-	currentVersion := "v0.2" // default for pre-upgrade installations
-	if data, err := os.ReadFile(versionFile); err == nil {
-		v := strings.TrimSpace(string(data))
-		// Extract the version tag (strip git describe suffix like -N-gabcdef)
-		if parts := strings.SplitN(v, "-", 2); len(parts) > 0 && strings.HasPrefix(parts[0], "v") {
-			currentVersion = parts[0]
-		}
-	}
-
-	fmt.Printf("Current version: %s\n", currentVersion)
-	fmt.Printf("Target version:  v0.3\n")
-	fmt.Println()
-
-	// Define migration order
-	migrations := []struct {
-		version string
-		script  string
-	}{
-		{"v0.3", "platform/migrations/v0.3.sh"},
-	}
-
-	// Find pending migrations
-	var pending []struct {
-		version string
-		script  string
-	}
-	found := false
-	for _, m := range migrations {
-		if m.version == currentVersion {
-			found = true
-			continue // skip current version
-		}
-		if found || currentVersion < m.version {
-			pending = append(pending, m)
-		}
-	}
-
-	if len(pending) == 0 {
-		fmt.Println("Already up to date.")
-		return 0
-	}
-
-	fmt.Printf("Pending migrations: %d\n", len(pending))
-	for _, m := range pending {
-		fmt.Printf("  %s — %s\n", m.version, m.script)
-	}
-	fmt.Println()
-
-	if dryRun {
-		fmt.Println("(dry run — no changes made)")
-		return 0
-	}
-
-	// Find the repo root (look for install.sh)
-	repoRoot := ""
-	for _, candidate := range []string{
-		"/home/" + os.Getenv("SUDO_USER") + "/FreeDB",
-		os.Getenv("HOME") + "/FreeDB",
-		"/root/FreeDB",
-	} {
-		if _, err := os.Stat(candidate + "/install.sh"); err == nil {
-			repoRoot = candidate
-			break
-		}
-	}
-	if repoRoot == "" {
-		fmt.Fprintf(os.Stderr, "Error: cannot find FreeDB repo. Clone it to ~/FreeDB first.\n")
-		return 1
-	}
-
-	// Run pending migrations
-	for _, m := range pending {
-		scriptPath := repoRoot + "/" + m.script
-		if _, err := os.Stat(scriptPath); os.IsNotExist(err) {
-			fmt.Fprintf(os.Stderr, "Error: migration script not found: %s\n", scriptPath)
-			return 1
-		}
-
-		fmt.Printf("Running migration %s...\n", m.version)
-		cmd := exec.CommandContext(context.Background(), "bash", scriptPath)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		cmd.Dir = repoRoot
-		if err := cmd.Run(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: migration %s failed: %v\n", m.version, err)
-			return 1
-		}
-
-		// Update version file
-		os.MkdirAll("/etc/freedb", 0755)
-		os.WriteFile(versionFile, []byte(m.version+"\n"), 0644)
-		fmt.Printf("Updated version to %s\n\n", m.version)
-	}
-
-	fmt.Println("Upgrade complete.")
-	return 0
+	return upgrade.Run(dryRun)
 }
 
 func printHelp() {
