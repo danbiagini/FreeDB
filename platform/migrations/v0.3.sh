@@ -112,8 +112,7 @@ else
   if [ -f "$REGISTRY" ]; then
     echo "   Generating passwords for existing database users..."
 
-    DB1_IP=$(sudo incus query '/1.0/instances/db1?recursion=1' 2>/dev/null | \
-      python3 -c "import sys,json; print([a['address'] for a in json.load(sys.stdin)['state']['network']['eth0']['addresses'] if a['family']=='inet'][0])" 2>/dev/null || echo "db1.incus")
+    DB1_IP="db1.incus"
 
     # Process each app with a database
     python3 -c "

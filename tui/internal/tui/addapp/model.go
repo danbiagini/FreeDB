@@ -442,12 +442,8 @@ func (m Model) deploy() tea.Cmd {
 				return deployResult{err: fmt.Errorf("creating database: %w", err)}
 			}
 
-			// Get db1 IP for connection string
-			dbIP, err := ic.GetContainerIP(ctx, "db1")
-			if err != nil {
-				dbIP = "db1.incus" // fallback to DNS
-			}
-			connStr := db.GetDBConnectionString(dbIP, name, dbPassword)
+			// Use stable DNS name for db connection string
+			connStr := db.GetDBConnectionString("db1.incus", name, dbPassword)
 
 			// Inject DATABASE_URL env var BEFORE starting
 			if err := ic.SetEnvVar(ctx, name, dbEnvVar, connStr); err != nil {
