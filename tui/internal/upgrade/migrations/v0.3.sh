@@ -49,9 +49,39 @@ if [ -z "$HOST_IP" ]; then
 fi
 
 if [ -n "$HOST_IP" ]; then
-  sudo incus network forward port remove incusbr0 "$HOST_IP" tcp 8080 2>/dev/null && \
-    echo "   Done — port 8080 removed from forward" || \
-    echo "   Skipped — port 8080 was not forwarded"
+  # Parse forward entries to find any that include 8080
+  FORWARD_OUTPUT=$(sudo incus network forward show incusbr0 "$HOST_IP" 2>/dev/null || echo "")
+
+  # Find the listen_port value and target_address for entries containing 8080
+  LISTEN_PORT=""
+  PROXY1_IP=""
+  PREV_LINE=""
+  while IFS= read -r line; do
+    if echo "$line" | grep -q "listen_port:"; then
+      PREV_LINE=$(echo "$line" | sed 's/.*listen_port: *//' | tr -d '"')
+    fi
+    if echo "$line" | grep -q "target_address:" && echo "$PREV_LINE" | grep -q "8080"; then
+      LISTEN_PORT="$PREV_LINE"
+      PROXY1_IP=$(echo "$line" | sed 's/.*target_address: *//')
+      break
+    fi
+  done <<< "$FORWARD_OUTPUT"
+
+  if [ -n "$PROXY1_IP" ] && [ -n "$LISTEN_PORT" ]; then
+    # Remove the existing entry
+    sudo incus network forward port remove incusbr0 "$HOST_IP" tcp "$LISTEN_PORT" 2>/dev/null || true
+
+    # Re-add without 8080
+    NEW_PORTS=$(echo "$LISTEN_PORT" | sed 's/,8080//;s/8080,//;s/8080//')
+    if [ -n "$NEW_PORTS" ]; then
+      sudo incus network forward port add incusbr0 "$HOST_IP" tcp "$NEW_PORTS" "$PROXY1_IP" 2>/dev/null || true
+      echo "   Done — removed 8080, keeping ${NEW_PORTS} -> ${PROXY1_IP}"
+    else
+      echo "   Done — removed port forward entirely (was only 8080)"
+    fi
+  else
+    echo "   Skipped — port 8080 not found in forwards"
+  fi
 else
   echo "   Skipped — could not detect host IP"
 fi

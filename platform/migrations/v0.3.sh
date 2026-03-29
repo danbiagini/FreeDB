@@ -5,22 +5,28 @@ set -euo pipefail
 # - HTTPS redirect in Traefik
 # - Remove 8080 from network forward
 # - PostgreSQL: trust → scram-sha-256 with password generation
-
-SCRIPT_DIR=$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
-REPO_ROOT="${SCRIPT_DIR}/../.."
+#
+# This script is self-contained (embedded in the freedb binary).
+# It patches existing configs in-place rather than pushing files from the repo.
 
 echo "=== Migration v0.3: Security hardening ==="
 
 # ---------------------------------------------------------------
-# 1. HTTPS redirect — push updated traefik.toml
+# 1. HTTPS redirect — patch traefik.toml in proxy1
 # ---------------------------------------------------------------
 echo ""
 echo "1. Updating Traefik config (HTTPS redirect)..."
 
 if sudo incus info proxy1 &>/dev/null; then
-  sudo incus file push "${REPO_ROOT}/platform/config/traefik.toml" proxy1/etc/traefik/
-  sudo incus exec proxy1 -- systemctl restart traefik
-  echo "   Done — HTTP now redirects to HTTPS"
+  # Check if redirect is already configured
+  if sudo incus exec proxy1 -- grep -q "redirections" /etc/traefik/traefik.toml 2>/dev/null; then
+    echo "   Already configured — skipping"
+  else
+    # Add redirect config after the web entrypoint address line
+    sudo incus exec proxy1 -- sed -i '/\[entryPoints.web\]/{n;s|address = ":80"|address = ":80"\n    [entryPoints.web.http.redirections.entryPoint]\n      to = "websecure"\n      scheme = "https"|;}' /etc/traefik/traefik.toml
+    sudo incus exec proxy1 -- systemctl restart traefik
+    echo "   Done — HTTP now redirects to HTTPS"
+  fi
 else
   echo "   Skipped — proxy1 not running"
 fi
@@ -32,20 +38,50 @@ echo ""
 echo "2. Removing dashboard port (8080) from network forward..."
 
 # Detect host internal IP
-if command -v curl &>/dev/null; then
-  HOST_IP=$(curl -sf -m 2 -H "Metadata-Flavor: Google" \
-    http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/ip 2>/dev/null || \
-    (TOKEN=$(curl -sf -m 2 -X PUT -H "X-aws-ec2-metadata-token-ttl-seconds: 10" \
-      http://169.254.169.254/latest/api/token 2>/dev/null) && \
-    curl -sf -H "X-aws-ec2-metadata-token: $TOKEN" \
-      http://169.254.169.254/latest/meta-data/local-ipv4 2>/dev/null) || \
-    ip -4 route get 1.0.0.0 2>/dev/null | grep -oP 'src \K\S+' || echo "")
+HOST_IP=""
+if curl -sf -m 2 -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/ >/dev/null 2>&1; then
+  HOST_IP=$(curl -sf -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/ip 2>/dev/null || echo "")
+elif TOKEN=$(curl -sf -m 2 -X PUT -H "X-aws-ec2-metadata-token-ttl-seconds: 10" http://169.254.169.254/latest/api/token 2>/dev/null); then
+  HOST_IP=$(curl -sf -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/local-ipv4 2>/dev/null || echo "")
+fi
+if [ -z "$HOST_IP" ]; then
+  HOST_IP=$(ip -4 route get 1.0.0.0 2>/dev/null | grep -oP 'src \K\S+' || echo "")
 fi
 
-if [ -n "${HOST_IP:-}" ]; then
-  sudo incus network forward port remove incusbr0 "$HOST_IP" tcp 8080 2>/dev/null && \
-    echo "   Done — port 8080 removed from forward" || \
-    echo "   Skipped — port 8080 was not forwarded"
+if [ -n "$HOST_IP" ]; then
+  # Parse forward entries to find any that include 8080
+  FORWARD_OUTPUT=$(sudo incus network forward show incusbr0 "$HOST_IP" 2>/dev/null || echo "")
+
+  # Find the listen_port value and target_address for entries containing 8080
+  LISTEN_PORT=""
+  PROXY1_IP=""
+  PREV_LINE=""
+  while IFS= read -r line; do
+    if echo "$line" | grep -q "listen_port:"; then
+      PREV_LINE=$(echo "$line" | sed 's/.*listen_port: *//' | tr -d '"')
+    fi
+    if echo "$line" | grep -q "target_address:" && echo "$PREV_LINE" | grep -q "8080"; then
+      LISTEN_PORT="$PREV_LINE"
+      PROXY1_IP=$(echo "$line" | sed 's/.*target_address: *//')
+      break
+    fi
+  done <<< "$FORWARD_OUTPUT"
+
+  if [ -n "$PROXY1_IP" ] && [ -n "$LISTEN_PORT" ]; then
+    # Remove the existing entry
+    sudo incus network forward port remove incusbr0 "$HOST_IP" tcp "$LISTEN_PORT" 2>/dev/null || true
+
+    # Re-add without 8080
+    NEW_PORTS=$(echo "$LISTEN_PORT" | sed 's/,8080//;s/8080,//;s/8080//')
+    if [ -n "$NEW_PORTS" ]; then
+      sudo incus network forward port add incusbr0 "$HOST_IP" tcp "$NEW_PORTS" "$PROXY1_IP" 2>/dev/null || true
+      echo "   Done — removed 8080, keeping ${NEW_PORTS} -> ${PROXY1_IP}"
+    else
+      echo "   Done — removed port forward entirely (was only 8080)"
+    fi
+  else
+    echo "   Skipped — port 8080 not found in forwards"
+  fi
 else
   echo "   Skipped — could not detect host IP"
 fi
@@ -68,7 +104,7 @@ PG_VERSION=$(sudo incus exec db1 -- sh -c "ls /etc/postgresql/ | head -1")
 PG_HBA="/etc/postgresql/${PG_VERSION}/main/pg_hba.conf"
 
 # Check if already migrated
-if sudo incus exec db1 -- grep -q "scram-sha-256" "$PG_HBA" 2>/dev/null; then
+if sudo incus exec db1 -- grep -q "10\.0\.0\.1/24.*scram-sha-256" "$PG_HBA" 2>/dev/null; then
   echo "   Already using scram-sha-256 — skipping"
 else
   # Generate passwords for all app database users
@@ -76,21 +112,20 @@ else
   if [ -f "$REGISTRY" ]; then
     echo "   Generating passwords for existing database users..."
 
-    # Get list of apps with databases
-    APPS_WITH_DB=$(python3 -c "
-import json, sys
+    DB1_IP=$(sudo incus query '/1.0/instances/db1?recursion=1' 2>/dev/null | \
+      python3 -c "import sys,json; print([a['address'] for a in json.load(sys.stdin)['state']['network']['eth0']['addresses'] if a['family']=='inet'][0])" 2>/dev/null || echo "db1.incus")
+
+    # Process each app with a database
+    python3 -c "
+import json
 with open('$REGISTRY') as f:
     reg = json.load(f)
 for name, app in reg.get('apps', {}).items():
     if app.get('has_db') and app.get('db_name'):
         container = app.get('container_name', name)
-        print(f\"{name}|{app['db_name']}|{container}\")
-" 2>/dev/null || echo "")
-
-    DB1_IP=$(sudo incus query '/1.0/instances/db1?recursion=1' 2>/dev/null | \
-      python3 -c "import sys,json; print([a['address'] for a in json.load(sys.stdin)['state']['network']['eth0']['addresses'] if a['family']=='inet'][0])" 2>/dev/null || echo "db1.incus")
-
-    while IFS='|' read -r APP_NAME DB_NAME CONTAINER_NAME; do
+        db_env_var = app.get('db_env_var', 'DATABASE_URL')
+        print(f\"{name}|{app['db_name']}|{container}|{db_env_var}\")
+" 2>/dev/null | while IFS='|' read -r APP_NAME DB_NAME CONTAINER_NAME DB_ENV_VAR; do
       [ -z "$APP_NAME" ] && continue
 
       # Generate password
@@ -102,20 +137,11 @@ for name, app in reg.get('apps', {}).items():
 
       # Update DATABASE_URL in the container
       if sudo incus info "$CONTAINER_NAME" &>/dev/null; then
-        # Find the current DATABASE_URL env var name
-        DB_ENV_VAR=$(python3 -c "
-import json
-with open('$REGISTRY') as f:
-    reg = json.load(f)
-app = reg.get('apps', {}).get('$APP_NAME', {})
-print(app.get('db_env_var', 'DATABASE_URL'))
-" 2>/dev/null || echo "DATABASE_URL")
-
         NEW_URL="postgresql://${DB_NAME}:${PASSWORD}@${DB1_IP}:5432/${DB_NAME}?sslmode=disable"
         echo "   Updating ${DB_ENV_VAR} on container ${CONTAINER_NAME}..."
         sudo incus config set "$CONTAINER_NAME" "environment.${DB_ENV_VAR}=${NEW_URL}" 2>/dev/null || true
       fi
-    done <<< "$APPS_WITH_DB"
+    done
   fi
 
   # Update pg_hba.conf
@@ -128,15 +154,22 @@ print(app.get('db_env_var', 'DATABASE_URL'))
   echo "   Done — PostgreSQL now requires password authentication"
 
   # Restart app containers to pick up new DATABASE_URL
-  if [ -f "$REGISTRY" ] && [ -n "${APPS_WITH_DB:-}" ]; then
-    echo "   Restarting app containers..."
-    while IFS='|' read -r APP_NAME DB_NAME CONTAINER_NAME; do
+  if [ -f "$REGISTRY" ]; then
+    echo "   Restarting app containers with databases..."
+    python3 -c "
+import json
+with open('$REGISTRY') as f:
+    reg = json.load(f)
+for name, app in reg.get('apps', {}).items():
+    if app.get('has_db'):
+        print(app.get('container_name', name))
+" 2>/dev/null | while read -r CONTAINER_NAME; do
       [ -z "$CONTAINER_NAME" ] && continue
       if sudo incus info "$CONTAINER_NAME" &>/dev/null; then
         echo "   Restarting ${CONTAINER_NAME}..."
         sudo incus restart "$CONTAINER_NAME" 2>/dev/null || true
       fi
-    done <<< "$APPS_WITH_DB"
+    done
   fi
 fi
 
