@@ -89,6 +89,12 @@ fi
 # Clean up marker
 rm -f "$MARKER_FILE"
 
+# Write installed version
+FREEDB_VERSION=$(git describe --tags --always 2>/dev/null || echo "dev")
+sudo mkdir -p /etc/freedb
+echo "$FREEDB_VERSION" | sudo tee /etc/freedb/version > /dev/null
+echo "Installed version: $FREEDB_VERSION"
+
 echo ""
 echo "=============================="
 echo " FreeDB installation complete!"
