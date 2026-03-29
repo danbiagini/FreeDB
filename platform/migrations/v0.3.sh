@@ -133,13 +133,13 @@ for name, app in reg.get('apps', {}).items():
 
       echo "   Setting password for user ${DB_NAME}..."
       sudo incus exec db1 -- sudo -u postgres psql -c \
-        "ALTER USER ${DB_NAME} WITH PASSWORD '${PASSWORD}'" 2>/dev/null || true
+        "ALTER USER \"${DB_NAME}\" WITH PASSWORD '${PASSWORD}'" 2>/dev/null || true
 
       # Update DATABASE_URL in the container
       if sudo incus info "$CONTAINER_NAME" &>/dev/null; then
         NEW_URL="postgresql://${DB_NAME}:${PASSWORD}@${DB1_IP}:5432/${DB_NAME}?sslmode=disable"
         echo "   Updating ${DB_ENV_VAR} on container ${CONTAINER_NAME}..."
-        sudo incus config set "$CONTAINER_NAME" "environment.${DB_ENV_VAR}=${NEW_URL}" 2>/dev/null || true
+        sudo incus config set "$CONTAINER_NAME" "environment.${DB_ENV_VAR}" "${NEW_URL}" 2>/dev/null || true
       fi
     done
   fi
