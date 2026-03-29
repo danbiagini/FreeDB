@@ -186,6 +186,28 @@ sudo /opt/freedb/backup-db.sh              # full backup (pg_dumpall)
 sudo /opt/freedb/backup-db.sh mydb         # single database backup
 ```
 
+## SSH Tunnel Access
+
+The Traefik dashboard and PostgreSQL are not exposed to the internet. Access them securely via SSH tunnel using stable `.incus` DNS names:
+
+### Traefik Dashboard
+```bash
+ssh -L 8080:proxy1.incus:8080 user@your-host
+# Then open http://localhost:8080 in your browser
+```
+
+### Database
+```bash
+ssh -L 5432:db1.incus:5432 user@your-host
+# Then connect locally
+psql postgresql://myapp:password@localhost:5432/myapp
+```
+
+On GCP via IAP tunnel:
+```bash
+gcloud compute ssh freedb --zone us-central1-a --tunnel-through-iap -- -L 8080:proxy1.incus:8080
+```
+
 ## App Examples
 
 The `apps/` directory contains example app configurations:
