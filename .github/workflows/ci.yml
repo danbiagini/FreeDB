@@ -62,4 +62,6 @@ jobs:
         continue-on-error: true
 
       - name: Validate
-        run: tofu init -backend=false && tofu validate
+        run: |
+          tofu init -backend=false
+          tofu validate -var="project=ci-validate" -var="service_account_id=ci-validate"
