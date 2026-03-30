@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  tui-build-test:
+    name: TUI Build & Test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tui
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: tui/go.mod
+
+      - name: Go vet
+        run: go vet ./...
+
+      - name: Go test
+        run: go test ./...
+
+      - name: Build (linux/amd64)
+        run: GOOS=linux GOARCH=amd64 go build -o /dev/null .
+
+  shellcheck:
+    name: Shell Script Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Lint platform scripts
+        run: shellcheck -x -S warning platform/scripts/*.sh
+        continue-on-error: true
+
+      - name: Lint install script
+        run: shellcheck -x -S warning install.sh
+        continue-on-error: true
+
+      - name: Lint ops scripts
+        run: shellcheck -x -S warning ops/*.sh
+        continue-on-error: true
+
+  tofu-validate:
+    name: OpenTofu Validate
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: opentofu/setup-opentofu@v1
+
+      - name: Format check
+        run: tofu fmt -check
+        continue-on-error: true
+
+      - name: Validate
+        run: |
+          tofu init -backend=false
+          tofu validate -var="project=ci-validate" -var="service_account_id=ci-validate"

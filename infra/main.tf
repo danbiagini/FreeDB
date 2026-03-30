@@ -5,8 +5,8 @@ variable "project" {
 }
 
 variable "service_account_id" {
- type        = string
- description = "Service account for the compute instances"
+  type        = string
+  description = "Service account for the compute instances"
 }
 
 variable "env" {
@@ -39,9 +39,9 @@ resource "google_compute_subnetwork" "default" {
 }
 
 resource "google_compute_address" "static-ip" {
-  provider = google
-  name = "${local.prefix}static-ip"
-  region = "us-central1"
+  provider     = google
+  name         = "${local.prefix}static-ip"
+  region       = "us-central1"
   address_type = "EXTERNAL"
   network_tier = "STANDARD"
 }
@@ -67,8 +67,8 @@ data "google_compute_network" "my-network" {
 # https://cloud.google.com/nat/docs/gce-example#console_5
 
 resource "google_compute_firewall" "default" {
-  name    = "${local.prefix}db-firewall"
-  network = data.google_compute_network.my-network.name
+  name     = "${local.prefix}db-firewall"
+  network  = data.google_compute_network.my-network.name
   priority = 1000
   allow {
     protocol = "tcp"
@@ -79,19 +79,19 @@ resource "google_compute_firewall" "default" {
 }
 
 resource "google_compute_firewall" "no-rdp-rule" {
-  name = "${local.prefix}no-internet-ssh-rdp"
-  network = data.google_compute_network.my-network.name
+  name     = "${local.prefix}no-internet-ssh-rdp"
+  network  = data.google_compute_network.my-network.name
   priority = 2000
   deny {
     protocol = "tcp"
-    ports    = ["22","3389"]
+    ports    = ["22", "3389"]
   }
   source_ranges = ["0.0.0.0/0"]
 }
 
 resource "google_compute_firewall" "web" {
-  name    = "${local.prefix}web-internal-firewall"
-  network = data.google_compute_network.my-network.name
+  name     = "${local.prefix}web-internal-firewall"
+  network  = data.google_compute_network.my-network.name
   priority = 1000
   allow {
     protocol = "tcp"
@@ -101,15 +101,15 @@ resource "google_compute_firewall" "web" {
 }
 
 resource "google_compute_firewall" "proxy" {
-  name    = "${local.prefix}proxy-firewall"
-  network = data.google_compute_network.my-network.name
+  name     = "${local.prefix}proxy-firewall"
+  network  = data.google_compute_network.my-network.name
   priority = 1000
   allow {
     protocol = "tcp"
     ports    = ["80", "443"]
   }
   source_ranges = ["0.0.0.0/0"]
-  target_tags = ["${local.prefix}web"]
+  target_tags   = ["${local.prefix}web"]
 }
 
 # Using pd-balanced because it's faster for Compute Engine
@@ -126,10 +126,10 @@ data "google_service_account" "default" {
 
 # Create a single Compute Engine instance
 resource "google_compute_instance" "default" {
-  name         = "${local.prefix}freedb"
-  machine_type = "e2-medium"
-  zone         = "us-central1-a"
-  tags         = ["${local.prefix}ssh", "${local.prefix}web"]
+  name                      = "${local.prefix}freedb"
+  machine_type              = "e2-medium"
+  zone                      = "us-central1-a"
+  tags                      = ["${local.prefix}ssh", "${local.prefix}web"]
   allow_stopping_for_update = true
 
   boot_disk {
@@ -140,7 +140,7 @@ resource "google_compute_instance" "default" {
   }
 
   attached_disk {
-    source = google_compute_disk.data.id
+    source      = google_compute_disk.data.id
     device_name = google_compute_disk.data.name
   }
 
@@ -151,14 +151,14 @@ resource "google_compute_instance" "default" {
     access_config {
       # Include this section to give the VM an external IP address
       network_tier = "STANDARD"
-      nat_ip = google_compute_address.static-ip.address
+      nat_ip       = google_compute_address.static-ip.address
     }
     network_ip = google_compute_address.db-internal-static-ip.address
   }
 
   service_account {
     scopes = ["cloud-platform"]
-    email = data.google_service_account.default.email
+    email  = data.google_service_account.default.email
   }
 }
 
@@ -173,7 +173,7 @@ resource "google_storage_bucket" "static" {
       type = "Delete"
     }
     condition {
-      age = 30
+      age                   = 30
       matches_storage_class = ["STANDARD"]
     }
   }

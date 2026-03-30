@@ -106,7 +106,12 @@ AUTHEOF
 detect_attached_disk() {
   case "$CLOUD" in
     gcp)
-      ls /dev/disk/by-id/google-* 2>/dev/null | grep -v 'part' | grep -v 'persistent-disk-0' | head -1 || true
+      for disk in /dev/disk/by-id/google-*; do
+        [ -e "$disk" ] || continue
+        case "$disk" in *part*|*persistent-disk-0*) continue;; esac
+        echo "$disk"
+        return
+      done
       ;;
     aws)
       # On AWS, find block devices that aren't the root disk
@@ -161,8 +166,7 @@ install_cloud_cli() {
       if ! command -v aws &>/dev/null; then
         sudo apt-get install -yq unzip
         curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "/tmp/awscliv2.zip"
-        cd /tmp && unzip -qo awscliv2.zip && sudo ./aws/install && rm -rf aws awscliv2.zip
-        cd -
+        (cd /tmp && unzip -qo awscliv2.zip && sudo ./aws/install && rm -rf aws awscliv2.zip)
       fi
       ;;
     *)
