@@ -18,6 +18,7 @@ import (
 	"github.com/danbiagini/freedb-tui/internal/registry"
 	"github.com/danbiagini/freedb-tui/internal/traefik"
 	"github.com/danbiagini/freedb-tui/internal/tui"
+	"github.com/danbiagini/freedb-tui/internal/upgrade"
 )
 
 var version = "dev"
@@ -50,6 +51,8 @@ func main() {
 			os.Exit(runDestroy(os.Args[2:]))
 		case "status":
 			os.Exit(runStatus(os.Args[2:]))
+		case "upgrade":
+			os.Exit(runUpgrade(os.Args[2:]))
 		case "--help", "-h", "help":
 			printHelp()
 			os.Exit(0)
@@ -434,6 +437,24 @@ func runDestroy(args []string) int {
 	return 0
 }
 
+func runUpgrade(args []string) int {
+	dryRun := false
+	for _, a := range args {
+		if a == "--dry-run" {
+			dryRun = true
+		}
+		if a == "--help" || a == "-h" {
+			fmt.Println("Usage: sudo freedb upgrade [--dry-run]")
+			fmt.Println()
+			fmt.Println("Run pending platform migrations to upgrade FreeDB.")
+			fmt.Println("Migration scripts are embedded in the binary — no repo clone needed.")
+			return 0
+		}
+	}
+
+	return upgrade.Run(dryRun)
+}
+
 func printHelp() {
 	fmt.Println("freedb — FreeDB app manager")
 	fmt.Println()
@@ -443,6 +464,7 @@ func printHelp() {
 	fmt.Println("  sudo freedb status APP   Show detailed app status")
 	fmt.Println("  sudo freedb deploy       Deploy/update an app (for CI/CD)")
 	fmt.Println("  sudo freedb destroy APP  Delete an app and all its resources")
+	fmt.Println("  sudo freedb upgrade      Run pending platform migrations")
 	fmt.Println("  sudo freedb check        Run health checks")
 	fmt.Println("  freedb --version         Print version")
 	fmt.Println("  freedb --help            Show this help")

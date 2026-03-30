@@ -2,6 +2,8 @@ package db
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"strings"
 
@@ -10,15 +12,34 @@ import (
 
 const dbContainer = "db1"
 
-func CreateDatabase(ctx context.Context, ic *incus.Client, name string) error {
-	// Create user
+// GeneratePassword creates a random 24-character hex password
+func GeneratePassword() string {
+	b := make([]byte, 12)
+	rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+// CreateDatabase creates a PostgreSQL user with a password and a database.
+// Returns the generated password.
+func CreateDatabase(ctx context.Context, ic *incus.Client, name string) (string, error) {
+	password := GeneratePassword()
+
+	// Create user with password
 	_, err := ic.Exec(ctx, dbContainer, []string{
-		"sudo", "-u", "postgres", "createuser", "-d", name,
+		"sudo", "-u", "postgres", "psql", "-c",
+		fmt.Sprintf("CREATE USER %s WITH PASSWORD '%s' CREATEDB", name, password),
 	})
 	if err != nil {
-		// User might already exist
 		if !strings.Contains(err.Error(), "already exists") {
-			return fmt.Errorf("creating user %s: %w", name, err)
+			return "", fmt.Errorf("creating user %s: %w", name, err)
+		}
+		// User exists — update password
+		_, err = ic.Exec(ctx, dbContainer, []string{
+			"sudo", "-u", "postgres", "psql", "-c",
+			fmt.Sprintf("ALTER USER %s WITH PASSWORD '%s'", name, password),
+		})
+		if err != nil {
+			return "", fmt.Errorf("updating password for %s: %w", name, err)
 		}
 	}
 
@@ -28,11 +49,11 @@ func CreateDatabase(ctx context.Context, ic *incus.Client, name string) error {
 	})
 	if err != nil {
 		if !strings.Contains(err.Error(), "already exists") {
-			return fmt.Errorf("creating database %s: %w", name, err)
+			return "", fmt.Errorf("creating database %s: %w", name, err)
 		}
 	}
 
-	return nil
+	return password, nil
 }
 
 func DropDatabase(ctx context.Context, ic *incus.Client, name string) error {
@@ -55,6 +76,6 @@ func DropDatabase(ctx context.Context, ic *incus.Client, name string) error {
 	return nil
 }
 
-func GetDBConnectionString(dbIP string, name string) string {
-	return fmt.Sprintf("postgresql://%s@%s:5432/%s?sslmode=disable", name, dbIP, name)
+func GetDBConnectionString(dbIP, name, password string) string {
+	return fmt.Sprintf("postgresql://%s:%s@%s:5432/%s?sslmode=disable", name, password, dbIP, name)
 }
