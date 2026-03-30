@@ -62,6 +62,8 @@ FreeDB  test-freedb | GCP | 34.56.78.90 | 2 CPUs
 - **Live monitoring** — CPU%, memory, request counts, error rates from Traefik Prometheus metrics
 - **Registry management** — configure private registries with authentication
 - **Health checks** — `freedb check` validates the entire platform stack
+- **CLI commands** — `freedb list`, `freedb status`, `freedb deploy`, `freedb destroy` for scripting and CI/CD
+- **Upgrades** — `freedb upgrade` runs versioned migrations with embedded scripts
 
 ### Install the TUI
 
@@ -207,6 +209,34 @@ On GCP via IAP tunnel:
 ```bash
 gcloud compute ssh freedb --zone us-central1-a --tunnel-through-iap -- -L 8080:proxy1.incus:8080
 ```
+
+## Upgrading
+
+FreeDB supports in-place upgrades via versioned migrations embedded in the binary:
+
+```bash
+# Install the new binary
+sudo cp freedb-linux-amd64 /usr/local/bin/freedb
+
+# Preview pending migrations
+sudo freedb upgrade --dry-run
+
+# Run the upgrade
+sudo freedb upgrade
+```
+
+The upgrade system:
+- Tracks the installed version in `/etc/freedb/version`
+- Migration scripts are embedded in the binary (no repo clone needed)
+- Each migration is idempotent (safe to run multiple times)
+- Existing installations without a version file are assumed to be v0.2
+
+### Version History
+
+| Version | Changes |
+|---|---|
+| v0.2 | Initial release with TUI, multi-cloud support |
+| v0.3 | Security hardening: HTTPS redirect, PostgreSQL scram-sha-256 auth, Traefik dashboard access restricted to SSH tunnel |
 
 ## App Examples
 
