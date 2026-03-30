@@ -2,6 +2,7 @@ package databases
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -281,13 +282,47 @@ func (m Model) View() string {
 }
 
 func getLastBackupInfo() string {
+	statusFile := "/var/lib/freedb/backup-status.json"
+	data, err := os.ReadFile(statusFile)
+	if err == nil {
+		var status struct {
+			Database    string `json:"database"`
+			Status      string `json:"status"`
+			Timestamp   string `json:"timestamp"`
+			File        string `json:"file"`
+			SizeBytes   int64  `json:"size_bytes"`
+			CloudUpload string `json:"cloud_upload"`
+			Error       string `json:"error"`
+		}
+		if json.Unmarshal(data, &status) == nil {
+			size := formatSize(status.SizeBytes)
+			cloud := status.CloudUpload
+			if cloud == "uploaded" {
+				cloud = "uploaded to cloud"
+			} else if cloud == "failed" {
+				cloud = "cloud upload FAILED"
+			} else if cloud == "skipped" {
+				cloud = "local only"
+			}
+
+			result := fmt.Sprintf("%s — %s (%s, %s)", status.Status, status.File, size, cloud)
+			if status.Timestamp != "" {
+				result += " at " + status.Timestamp
+			}
+			if status.Error != "" {
+				result += " [" + status.Error + "]"
+			}
+			return result
+		}
+	}
+
+	// Fallback: check backup directory for files
 	backupDir := "/var/lib/freedb/backups"
 	entries, err := os.ReadDir(backupDir)
 	if err != nil || len(entries) == 0 {
 		return "no backups found"
 	}
 
-	// Find the most recent backup file
 	var newest os.DirEntry
 	for _, e := range entries {
 		if e.IsDir() {
@@ -308,21 +343,21 @@ func getLastBackupInfo() string {
 		return "no backups found"
 	}
 
-	info, err := newest.Info()
-	if err != nil {
+	info, _ := newest.Info()
+	if info == nil {
 		return newest.Name()
 	}
 
-	size := "unknown"
-	if info.Size() > 1024*1024 {
-		size = fmt.Sprintf("%.1f MB", float64(info.Size())/(1024*1024))
-	} else if info.Size() > 1024 {
-		size = fmt.Sprintf("%.1f KB", float64(info.Size())/1024)
-	} else {
-		size = fmt.Sprintf("%d B", info.Size())
-	}
+	return fmt.Sprintf("%s (%s, %s)", newest.Name(), formatSize(info.Size()), info.ModTime().Format("2006-01-02 15:04"))
+}
 
-	return fmt.Sprintf("%s (%s, %s)", newest.Name(), size, info.ModTime().Format("2006-01-02 15:04"))
+func formatSize(bytes int64) string {
+	if bytes > 1024*1024 {
+		return fmt.Sprintf("%.1f MB", float64(bytes)/(1024*1024))
+	} else if bytes > 1024 {
+		return fmt.Sprintf("%.1f KB", float64(bytes)/1024)
+	}
+	return fmt.Sprintf("%d B", bytes)
 }
 
 func (m Model) fetchDatabases() tea.Cmd {
