@@ -53,6 +53,13 @@ func main() {
 			os.Exit(runStatus(os.Args[2:]))
 		case "upgrade":
 			os.Exit(runUpgrade(os.Args[2:]))
+		case "install-backup-script":
+			if err := upgrade.InstallBackupScript(); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Println("Backup script installed to /opt/freedb/backup-db.sh")
+			os.Exit(0)
 		case "--help", "-h", "help":
 			printHelp()
 			os.Exit(0)

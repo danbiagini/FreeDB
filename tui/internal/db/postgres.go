@@ -76,6 +76,39 @@ func DropDatabase(ctx context.Context, ic *incus.Client, name string) error {
 	return nil
 }
 
+// DatabaseInfo holds information about a PostgreSQL database
+type DatabaseInfo struct {
+	Name  string
+	Owner string
+	Size  string
+}
+
+// ListDatabases returns all non-system databases in db1
+func ListDatabases(ctx context.Context, ic *incus.Client) ([]DatabaseInfo, error) {
+	output, err := ic.Exec(ctx, dbContainer, []string{
+		"sudo", "-u", "postgres", "psql", "-t", "-A", "-F", "|", "-c",
+		"SELECT d.datname, u.usename, pg_size_pretty(pg_database_size(d.datname)) FROM pg_database d JOIN pg_user u ON d.datdba = u.usesysid WHERE d.datistemplate = false AND d.datname != 'postgres' ORDER BY d.datname",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("listing databases: %w", err)
+	}
+
+	var dbs []DatabaseInfo
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		parts := strings.SplitN(line, "|", 3)
+		if len(parts) != 3 {
+			continue
+		}
+		dbs = append(dbs, DatabaseInfo{
+			Name:  strings.TrimSpace(parts[0]),
+			Owner: strings.TrimSpace(parts[1]),
+			Size:  strings.TrimSpace(parts[2]),
+		})
+	}
+
+	return dbs, nil
+}
+
 func GetDBConnectionString(dbIP, name, password string) string {
 	return fmt.Sprintf("postgresql://%s:%s@%s:5432/%s?sslmode=disable", name, password, dbIP, name)
 }

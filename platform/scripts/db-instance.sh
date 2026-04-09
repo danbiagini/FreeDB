@@ -57,8 +57,8 @@ sudo chmod +x /opt/freedb/backup-db.sh
 # Write backup config with environment-specific values
 BACKUP_BUCKET="${FREEDB_BACKUP_BUCKET:-freedb-backup}"
 sudo tee /opt/freedb/backup.env > /dev/null << EOF
-FREEDB_BACKUP_BUCKET=${BACKUP_BUCKET}
-FREEDB_DB_CONTAINER=db1
+export FREEDB_BACKUP_BUCKET=${BACKUP_BUCKET}
+export FREEDB_DB_CONTAINER=db1
 EOF
 echo "Backup config: bucket=${BACKUP_BUCKET}, container=db1"
 

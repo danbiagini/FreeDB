@@ -12,6 +12,9 @@ import (
 //go:embed migrations/*.sh
 var migrationFS embed.FS
 
+//go:embed files/backup-db.sh
+var backupScript []byte
+
 const versionFile = "/etc/freedb/version"
 
 type Migration struct {
@@ -22,6 +25,16 @@ type Migration struct {
 // All migrations in order
 var migrations = []Migration{
 	{Version: "v0.3", Script: "v0.3.sh"},
+	{Version: "v0.4", Script: "v0.4.sh"},
+}
+
+// InstallBackupScript writes the embedded backup script to /opt/freedb/
+func InstallBackupScript() error {
+	dir := "/opt/freedb"
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, "backup-db.sh"), backupScript, 0755)
 }
 
 func CurrentVersion() string {
@@ -98,6 +111,7 @@ func Run(dryRun bool) int {
 
 		fmt.Printf("Running migration %s...\n", m.Version)
 		cmd := exec.Command("bash", tmpFile)
+		cmd.Stdin = os.Stdin
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {
