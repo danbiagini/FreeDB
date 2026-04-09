@@ -111,6 +111,7 @@ func Run(dryRun bool) int {
 
 		fmt.Printf("Running migration %s...\n", m.Version)
 		cmd := exec.Command("bash", tmpFile)
+		cmd.Stdin = os.Stdin
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {

@@ -22,13 +22,18 @@ freedb install-backup-script 2>/dev/null || {
 
 echo "3. Writing backup config..."
 if [ ! -f /opt/freedb/backup.env ]; then
-  BACKUP_BUCKET="${FREEDB_BACKUP_BUCKET:-freedb-backup}"
+  DEFAULT_BUCKET="${FREEDB_BACKUP_BUCKET:-freedb-backup}"
+  read -r -p "   S3/GCS bucket for backups [${DEFAULT_BUCKET}]: " BUCKET_INPUT
+  BACKUP_BUCKET="${BUCKET_INPUT:-$DEFAULT_BUCKET}"
   cat > /opt/freedb/backup.env << EOF
-FREEDB_BACKUP_BUCKET=${BACKUP_BUCKET}
-FREEDB_DB_CONTAINER=db1
+export FREEDB_BACKUP_BUCKET=${BACKUP_BUCKET}
+export FREEDB_DB_CONTAINER=db1
 EOF
   echo "   Created /opt/freedb/backup.env (bucket=${BACKUP_BUCKET})"
 else
+  # Source existing config for use in post-migration instructions
+  . /opt/freedb/backup.env
+  BACKUP_BUCKET="${FREEDB_BACKUP_BUCKET:-freedb-backup}"
   echo "   /opt/freedb/backup.env already exists, skipping"
 fi
 
@@ -45,3 +50,18 @@ fi
 
 echo ""
 echo "=== Migration v0.4 complete ==="
+echo ""
+echo "NOTE: The EC2 instance needs S3 permissions to upload backups."
+echo "If the instance role doesn't have S3 access, add a policy:"
+echo ""
+echo "  aws iam put-role-policy --role-name <ROLE_NAME> \\"
+echo "    --policy-name freedb-backup-s3 \\"
+echo "    --policy-document '{"
+echo '    "Version": "2012-10-17",'
+echo '    "Statement": [{'
+echo '      "Effect": "Allow",'
+echo '      "Action": ["s3:PutObject", "s3:GetObject", "s3:ListBucket"],'
+echo "      \"Resource\": [\"arn:aws:s3:::${BACKUP_BUCKET}\", \"arn:aws:s3:::${BACKUP_BUCKET}/*\"]"
+echo "    }]}"
+echo ""
+echo "To test: sudo bash -c '. /opt/freedb/backup.env && /opt/freedb/backup-db.sh'"
