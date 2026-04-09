@@ -172,6 +172,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.err = nil
 			m.subview = subviewList
 			return m, m.createDatabase(name)
+		default:
+			var cmd tea.Cmd
+			m.nameInput, cmd = m.nameInput.Update(msg)
+			return m, cmd
 		}
 
 	case subviewConfirmDrop:
