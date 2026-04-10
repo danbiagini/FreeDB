@@ -11,10 +11,10 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/danbiagini/freedb-tui/internal/config"
-	"github.com/danbiagini/freedb-tui/internal/incus"
-	"github.com/danbiagini/freedb-tui/internal/registry"
-	"github.com/danbiagini/freedb-tui/internal/traefik"
+	"github.com/danbiagini/FreeDB/tui/internal/config"
+	"github.com/danbiagini/FreeDB/tui/internal/incus"
+	"github.com/danbiagini/FreeDB/tui/internal/registry"
+	"github.com/danbiagini/FreeDB/tui/internal/traefik"
 )
 
 var (

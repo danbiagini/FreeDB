@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/danbiagini/freedb-tui/internal/incus"
+	"github.com/danbiagini/FreeDB/tui/internal/incus"
 )
 
 const dbContainer = "db1"

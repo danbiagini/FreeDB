@@ -11,8 +11,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/danbiagini/freedb-tui/internal/db"
-	"github.com/danbiagini/freedb-tui/internal/incus"
+	"github.com/danbiagini/FreeDB/tui/internal/db"
+	"github.com/danbiagini/FreeDB/tui/internal/incus"
 )
 
 type subview int

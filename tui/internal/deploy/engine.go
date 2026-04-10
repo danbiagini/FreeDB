@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/danbiagini/freedb-tui/internal/incus"
-	"github.com/danbiagini/freedb-tui/internal/registry"
-	"github.com/danbiagini/freedb-tui/internal/traefik"
+	"github.com/danbiagini/FreeDB/tui/internal/incus"
+	"github.com/danbiagini/FreeDB/tui/internal/registry"
+	"github.com/danbiagini/FreeDB/tui/internal/traefik"
 )
 
 // UpdateParams contains everything needed to perform a zero-downtime update

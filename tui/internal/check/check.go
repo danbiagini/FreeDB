@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/danbiagini/freedb-tui/internal/config"
-	"github.com/danbiagini/freedb-tui/internal/incus"
+	"github.com/danbiagini/FreeDB/tui/internal/config"
+	"github.com/danbiagini/FreeDB/tui/internal/incus"
 )
 
 type Result struct {

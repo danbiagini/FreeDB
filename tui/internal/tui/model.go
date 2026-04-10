@@ -3,14 +3,14 @@ package tui
 import (
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/danbiagini/freedb-tui/internal/config"
-	"github.com/danbiagini/freedb-tui/internal/incus"
-	"github.com/danbiagini/freedb-tui/internal/registry"
-	"github.com/danbiagini/freedb-tui/internal/tui/addapp"
-	"github.com/danbiagini/freedb-tui/internal/tui/dashboard"
-	"github.com/danbiagini/freedb-tui/internal/tui/databases"
-	"github.com/danbiagini/freedb-tui/internal/tui/manage"
-	"github.com/danbiagini/freedb-tui/internal/tui/remotes"
+	"github.com/danbiagini/FreeDB/tui/internal/config"
+	"github.com/danbiagini/FreeDB/tui/internal/incus"
+	"github.com/danbiagini/FreeDB/tui/internal/registry"
+	"github.com/danbiagini/FreeDB/tui/internal/tui/addapp"
+	"github.com/danbiagini/FreeDB/tui/internal/tui/dashboard"
+	"github.com/danbiagini/FreeDB/tui/internal/tui/databases"
+	"github.com/danbiagini/FreeDB/tui/internal/tui/manage"
+	"github.com/danbiagini/FreeDB/tui/internal/tui/remotes"
 )
 
 type view int

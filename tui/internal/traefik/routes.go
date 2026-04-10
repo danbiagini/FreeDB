@@ -3,7 +3,7 @@ package traefik
 import (
 	"fmt"
 
-	"github.com/danbiagini/freedb-tui/internal/incus"
+	"github.com/danbiagini/FreeDB/tui/internal/incus"
 )
 
 const proxyContainer = "proxy1"
