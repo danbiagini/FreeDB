@@ -26,7 +26,9 @@ jobs:
         run: go test ./...
 
       - name: Build (linux/amd64)
-        run: GOOS=linux GOARCH=amd64 go build -o /dev/null .
+        run: |
+          VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "dev")
+          GOOS=linux GOARCH=amd64 go build -ldflags "-X main.version=$VERSION" -o /dev/null .
 
   shellcheck:
     name: Shell Script Lint
