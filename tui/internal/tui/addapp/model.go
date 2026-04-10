@@ -25,6 +25,7 @@ type step int
 const (
 	stepName step = iota
 	stepImage
+	stepExpose
 	stepDomain
 	stepPort
 	stepTLS
@@ -43,6 +44,7 @@ type deployResult struct {
 type Model struct {
 	step        step
 	inputs      []textinput.Model
+	needsRoute  bool
 	needsDB     bool
 	tls         bool
 	envVars     []string // accumulated KEY=VALUE entries
@@ -117,6 +119,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case "y", "n":
+			if m.step == stepExpose {
+				m.needsRoute = msg.String() == "y"
+				if m.needsRoute {
+					m.step = stepDomain
+					m.inputs[2].Focus()
+				} else {
+					m.step = stepDB
+				}
+				return m, nil
+			}
 			if m.step == stepTLS {
 				m.tls = msg.String() == "y"
 				m.step = stepDB
@@ -150,12 +162,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	if m.step <= stepPort || m.step == stepDBEnvVar {
+	if m.step == stepName || m.step == stepImage || m.step == stepDomain || m.step == stepPort || m.step == stepDBEnvVar {
 		var cmd tea.Cmd
-		idx := int(m.step)
-		if m.step == stepDBEnvVar {
-			idx = 4
-		}
+		idx := map[step]int{
+			stepName: 0, stepImage: 1, stepDomain: 2, stepPort: 3, stepDBEnvVar: 4,
+		}[m.step]
 		m.inputs[idx], cmd = m.inputs[idx].Update(msg)
 		return m, cmd
 	}
@@ -191,8 +202,7 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.err = nil
-		m.step = stepDomain
-		m.inputs[2].Focus()
+		m.step = stepExpose
 		return m, nil
 
 	case stepDomain:
@@ -259,41 +269,59 @@ func (m Model) View() string {
 	b.WriteString(titleStyle.Render("Add App"))
 	b.WriteString("\n\n")
 
-	labels := []string{"App name:", "Image:", "Domain:", "App port:"}
-	hints := []string{
-		"",
-		"",
-		"",
-		"(port your app listens on inside the container)",
+	// Name
+	if m.step > stepName {
+		b.WriteString(fmt.Sprintf("  %s %s\n", labelStyle.Render("App name:"), m.inputs[0].Value()))
+	} else if m.step == stepName {
+		b.WriteString(fmt.Sprintf("  %s %s\n", labelStyle.Render("App name:"), m.inputs[0].View()))
 	}
 
-	for i, label := range labels {
-		if m.step > step(i) {
-			val := m.inputs[i].Value()
-			hint := ""
-			if i == 3 {
-				hint = "  " + dimStyle.Render(hints[i])
+	// Image
+	if m.step > stepImage {
+		b.WriteString(fmt.Sprintf("  %s %s\n", labelStyle.Render("Image:"), m.inputs[1].Value()))
+	} else if m.step == stepImage {
+		b.WriteString(fmt.Sprintf("  %s %s\n", labelStyle.Render("Image:"), m.inputs[1].View()))
+	}
+
+	// Expose via Traefik
+	if m.step >= stepExpose && m.step < stepDeploying {
+		if m.step == stepExpose {
+			b.WriteString(fmt.Sprintf("\n  %s [y/n] ", labelStyle.Render("Expose via Traefik?")))
+		} else {
+			expStr := "no"
+			if m.needsRoute {
+				expStr = "yes"
 			}
-			b.WriteString(fmt.Sprintf("  %s %s%s\n", labelStyle.Render(label), val, hint))
-		} else if m.step == step(i) {
-			hint := ""
-			if hints[i] != "" {
-				hint = "  " + dimStyle.Render(hints[i])
-			}
-			b.WriteString(fmt.Sprintf("  %s %s%s\n", labelStyle.Render(label), m.inputs[i].View(), hint))
+			b.WriteString(fmt.Sprintf("  %s %s\n", labelStyle.Render("Expose:"), expStr))
 		}
 	}
 
-	// TLS option
-	if m.step >= stepTLS && m.step < stepDeploying {
-		if m.step == stepTLS {
-			b.WriteString(fmt.Sprintf("\n  %s [y/n] ", labelStyle.Render("TLS (Let's Encrypt):")))
-		} else {
-			tlsStr := "yes (Let's Encrypt)"
-			if !m.tls {
-				tlsStr = "no (HTTP only)"
+	// Domain, Port, TLS — only if exposed
+	if m.needsRoute {
+		if m.step > stepDomain {
+			b.WriteString(fmt.Sprintf("  %s %s\n", labelStyle.Render("Domain:"), m.inputs[2].Value()))
+		} else if m.step == stepDomain {
+			b.WriteString(fmt.Sprintf("  %s %s\n", labelStyle.Render("Domain:"), m.inputs[2].View()))
+		}
+
+		portHint := "  " + dimStyle.Render("(port your app listens on inside the container)")
+		if m.step > stepPort {
+			b.WriteString(fmt.Sprintf("  %s %s%s\n", labelStyle.Render("App port:"), m.inputs[3].Value(), portHint))
+		} else if m.step == stepPort {
+			b.WriteString(fmt.Sprintf("  %s %s%s\n", labelStyle.Render("App port:"), m.inputs[3].View(), portHint))
+		}
+
+		// TLS option
+		if m.step >= stepTLS && m.step < stepDeploying {
+			if m.step == stepTLS {
+				b.WriteString(fmt.Sprintf("\n  %s [y/n] ", labelStyle.Render("TLS (Let's Encrypt):")))
+			} else {
+				tlsStr := "yes (Let's Encrypt)"
+				if !m.tls {
+					tlsStr = "no (HTTP only)"
+				}
+				b.WriteString(fmt.Sprintf("  %s %s\n", labelStyle.Render("TLS:"), tlsStr))
 			}
-			b.WriteString(fmt.Sprintf("  %s %s\n", labelStyle.Render("TLS:"), tlsStr))
 		}
 	}
 
@@ -336,11 +364,15 @@ func (m Model) View() string {
 
 	// External access summary
 	if m.step == stepConfirm {
-		domain := m.inputs[2].Value()
-		if m.tls {
-			b.WriteString(dimStyle.Render(fmt.Sprintf("\n  External: https://%s (port 443, TLS via Let's Encrypt)", domain)))
+		if m.needsRoute {
+			domain := m.inputs[2].Value()
+			if m.tls {
+				b.WriteString(dimStyle.Render(fmt.Sprintf("\n  External: https://%s (port 443, TLS via Let's Encrypt)", domain)))
+			} else {
+				b.WriteString(dimStyle.Render(fmt.Sprintf("\n  External: http://%s (port 80, no TLS)", domain)))
+			}
 		} else {
-			b.WriteString(dimStyle.Render(fmt.Sprintf("\n  External: http://%s (port 80, no TLS)", domain)))
+			b.WriteString(dimStyle.Render("\n  Internal only — no external routing"))
 		}
 		b.WriteString("\n\n  Press [enter] to deploy, [esc] to cancel\n")
 	}
@@ -354,11 +386,13 @@ func (m Model) View() string {
 			b.WriteString("\n" + errStyle.Render(fmt.Sprintf("  Deploy failed: %v", m.err)) + "\n")
 		} else {
 			b.WriteString("\n" + successStyle.Render("  "+m.deployMsg) + "\n")
-			domain := m.inputs[2].Value()
-			if m.tls {
-				b.WriteString(dimStyle.Render(fmt.Sprintf("  Access at: https://%s", domain)) + "\n")
-			} else {
-				b.WriteString(dimStyle.Render(fmt.Sprintf("  Access at: http://%s", domain)) + "\n")
+			if m.needsRoute {
+				domain := m.inputs[2].Value()
+				if m.tls {
+					b.WriteString(dimStyle.Render(fmt.Sprintf("  Access at: https://%s", domain)) + "\n")
+				} else {
+					b.WriteString(dimStyle.Render(fmt.Sprintf("  Access at: http://%s", domain)) + "\n")
+				}
 			}
 		}
 		b.WriteString(dimStyle.Render("\n  Press any key to return to dashboard"))
@@ -381,6 +415,7 @@ func (m Model) deploy() tea.Cmd {
 	image := strings.TrimSpace(m.inputs[1].Value())
 	domain := strings.TrimSpace(m.inputs[2].Value())
 	portStr := strings.TrimSpace(m.inputs[3].Value())
+	needsRoute := m.needsRoute
 	needsDB := m.needsDB
 	dbEnvVar := strings.TrimSpace(m.inputs[4].Value())
 	if dbEnvVar == "" {
@@ -474,9 +509,11 @@ func (m Model) deploy() tea.Cmd {
 			return deployResult{err: fmt.Errorf("waiting for IP: %w", err)}
 		}
 
-		// 6. Create Traefik route
-		if err := traefik.PushRoute(ic, name, domain, ip, port, tls); err != nil {
-			return deployResult{err: fmt.Errorf("creating route: %w", err)}
+		// 6. Create Traefik route (skip for internal-only containers)
+		if needsRoute {
+			if err := traefik.PushRoute(ic, name, domain, ip, port, tls); err != nil {
+				return deployResult{err: fmt.Errorf("creating route: %w", err)}
+			}
 		}
 
 		// Save to registry
