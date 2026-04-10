@@ -19,14 +19,14 @@ jobs:
         with:
           go-version-file: tui/go.mod
 
-      - name: Go vet
-        run: go vet ./...
+      - name: Vet
+        run: make vet
 
-      - name: Go test
-        run: go test ./...
+      - name: Test
+        run: make test
 
       - name: Build (linux/amd64)
-        run: GOOS=linux GOARCH=amd64 go build -o /dev/null .
+        run: make build-linux
 
   shellcheck:
     name: Shell Script Lint
