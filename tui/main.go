@@ -60,6 +60,8 @@ func main() {
 			}
 			fmt.Println("Backup script installed to /opt/freedb/backup-db.sh")
 			os.Exit(0)
+		case "acme-email":
+			os.Exit(runAcmeEmail(os.Args[2:]))
 		case "--help", "-h", "help":
 			printHelp()
 			os.Exit(0)
@@ -462,6 +464,56 @@ func runUpgrade(args []string) int {
 	return upgrade.Run(dryRun)
 }
 
+func runAcmeEmail(args []string) int {
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
+		return 1
+	}
+
+	ic, err := incus.Connect("")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error connecting to incus: %v\n", err)
+		return 1
+	}
+
+	ctx := context.Background()
+
+	// No args: get current email
+	if len(args) == 0 {
+		out, err := ic.Exec(ctx, cfg.ProxyContainer, []string{
+			"grep", "-oP", `email\s*=\s*"\K[^"]+`, "/etc/traefik/traefik.toml",
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading traefik config: %v\n", err)
+			return 1
+		}
+		email := strings.TrimSpace(out)
+		if email == "" || email == "example@example.com" {
+			fmt.Println("ACME email: (not configured)")
+		} else {
+			fmt.Printf("ACME email: %s\n", email)
+		}
+		return 0
+	}
+
+	// With arg: set email
+	email := args[0]
+	sedCmd := fmt.Sprintf(`sed -i 's/^\(\s*email\s*=\s*\).*/\1"%s"/' /etc/traefik/traefik.toml`, email)
+	if _, err := ic.Exec(ctx, cfg.ProxyContainer, []string{"bash", "-c", sedCmd}); err != nil {
+		fmt.Fprintf(os.Stderr, "Error updating traefik config: %v\n", err)
+		return 1
+	}
+
+	if _, err := ic.Exec(ctx, cfg.ProxyContainer, []string{"systemctl", "restart", "traefik"}); err != nil {
+		fmt.Fprintf(os.Stderr, "Error restarting traefik: %v\n", err)
+		return 1
+	}
+
+	fmt.Printf("ACME email updated to %s and Traefik restarted.\n", email)
+	return 0
+}
+
 func printHelp() {
 	fmt.Println("freedb — FreeDB app manager")
 	fmt.Println()
@@ -472,6 +524,7 @@ func printHelp() {
 	fmt.Println("  sudo freedb deploy       Deploy/update an app (for CI/CD)")
 	fmt.Println("  sudo freedb destroy APP  Delete an app and all its resources")
 	fmt.Println("  sudo freedb upgrade      Run pending platform migrations")
+	fmt.Println("  sudo freedb acme-email [EMAIL]  Get or set Let's Encrypt notification email")
 	fmt.Println("  sudo freedb check        Run health checks")
 	fmt.Println("  freedb --version         Print version")
 	fmt.Println("  freedb --help            Show this help")

@@ -47,8 +47,19 @@ sudo incus exec proxy1 -- sudo chown -R traefik:traefik /etc/traefik/acme
 sudo incus exec proxy1 -- sudo chown -R traefik:traefik /etc/traefik/manual
 sudo incus exec proxy1 -- sudo chown -R traefik:traefik /etc/traefik/plugins-storage
 
-# Push base traefik config
-sudo incus file push "$TRAEFIK_CONFIG_PATH" proxy1/etc/traefik/
+# Push base traefik config with configured Let's Encrypt email
+ACME_EMAIL="${FREEDB_ACME_EMAIL:-}"
+if [ -z "$ACME_EMAIL" ]; then
+  read -r -p "Let's Encrypt email (for cert expiry warnings): " ACME_EMAIL
+  if [ -z "$ACME_EMAIL" ]; then
+    echo "Warning: No email set — cert expiry notifications will not be sent."
+    ACME_EMAIL="example@example.com"
+  fi
+fi
+TRAEFIK_TMP=$(mktemp)
+sed "s/example@example.com/${ACME_EMAIL}/" "$TRAEFIK_CONFIG_PATH" > "$TRAEFIK_TMP"
+sudo incus file push "$TRAEFIK_TMP" proxy1/etc/traefik/traefik.toml
+rm -f "$TRAEFIK_TMP"
 
 # If cloud-saver credentials exist, append the plugin config
 CLOUD_SAVER_CONFIG="${CONFIG_DIR}/traefik-cloud-saver.toml"
