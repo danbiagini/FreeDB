@@ -26,6 +26,7 @@ type Migration struct {
 var migrations = []Migration{
 	{Version: "v0.3", Script: "v0.3.sh"},
 	{Version: "v0.4", Script: "v0.4.sh"},
+	{Version: "v0.5", Script: "v0.5.sh"},
 }
 
 // InstallBackupScript writes the embedded backup script to /opt/freedb/

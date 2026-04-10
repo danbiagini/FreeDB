@@ -3,11 +3,12 @@ set -euo pipefail
 
 # FreeDB database backup script
 # Runs on the HOST, not inside the db1 container.
-# Uses incus exec to run pg_dumpall/pg_dump inside db1 and pipes output to the host.
+# Uses incus exec to run pg_dump inside db1 and pipes output to the host.
 # Writes status to /var/lib/freedb/backup-status.json for TUI display.
 #
-# PARAMETERS
-#   $1 - database name (optional — if omitted, runs pg_dumpall for full backup)
+# MODES
+#   No args    — back up all non-system databases + roles
+#   $1 = name  — back up a single database
 #
 # ENVIRONMENT
 #   FREEDB_BACKUP_BUCKET - cloud storage bucket name (default: freedb-backup)
@@ -19,91 +20,132 @@ BACKUP_BUCKET="${FREEDB_BACKUP_BUCKET:-freedb-backup}"
 DB_CONTAINER="${FREEDB_DB_CONTAINER:-db1}"
 CURRENT_DATE=$(date "+%Y%m%d")
 HOSTNAME=$(hostname)
-DB_NAME="${1:-pg_dumpall}"
 START_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
-# Ensure backup directory exists
 mkdir -p "$BACKUP_DIRECTORY"
 
+# Upload a file to cloud storage. Sets CLOUD_STATUS and CLOUD_ERROR.
+upload_to_cloud() {
+  local file="$1"
+  local name
+  name=$(basename "$file")
+  CLOUD_STATUS="none"
+  CLOUD_ERROR=""
+
+  if command -v gcloud &>/dev/null; then
+    if gcloud storage cp "$file" "gs://${BACKUP_BUCKET}/${HOSTNAME}/$name" 2>/dev/null; then
+      CLOUD_STATUS="uploaded"
+    else
+      CLOUD_STATUS="failed"
+      CLOUD_ERROR="gcloud upload failed"
+    fi
+  elif command -v aws &>/dev/null; then
+    if aws s3 cp "$file" "s3://${BACKUP_BUCKET}/${HOSTNAME}/$name" 2>/dev/null; then
+      CLOUD_STATUS="uploaded"
+    else
+      CLOUD_STATUS="failed"
+      CLOUD_ERROR="aws s3 upload failed"
+    fi
+  else
+    CLOUD_STATUS="skipped"
+    CLOUD_ERROR="no cloud CLI found"
+  fi
+}
+
+# Back up a single database (or roles). Appends result to RESULTS array.
+backup_one() {
+  local db_name="$1"
+  local dump_cmd="$2"
+  local fileName="${db_name}_${CURRENT_DATE}.sql.gz"
+  local status="success"
+  local cloud_status="none"
+  local cloud_error=""
+  local file_size=0
+
+  echo -n "Backing up ${db_name}... "
+
+  if ! sudo incus exec "$DB_CONTAINER" -- $dump_cmd | gzip > "$BACKUP_DIRECTORY/$fileName" 2>/dev/null; then
+    echo "FAILED"
+    RESULTS+=("{\"database\":\"${db_name}\",\"status\":\"failed\",\"file\":\"${fileName}\",\"size_bytes\":0,\"cloud_upload\":\"none\",\"error\":\"dump failed\"}")
+    return 1
+  fi
+
+  if [ ! -s "$BACKUP_DIRECTORY/$fileName" ]; then
+    echo "FAILED (empty)"
+    RESULTS+=("{\"database\":\"${db_name}\",\"status\":\"failed\",\"file\":\"${fileName}\",\"size_bytes\":0,\"cloud_upload\":\"none\",\"error\":\"backup file empty\"}")
+    return 1
+  fi
+
+  file_size=$(stat -c%s "$BACKUP_DIRECTORY/$fileName" 2>/dev/null || stat -f%z "$BACKUP_DIRECTORY/$fileName" 2>/dev/null || echo "0")
+
+  upload_to_cloud "$BACKUP_DIRECTORY/$fileName"
+  cloud_status="$CLOUD_STATUS"
+  cloud_error="$CLOUD_ERROR"
+
+  local size_human
+  size_human=$(du -h "$BACKUP_DIRECTORY/$fileName" | cut -f1)
+  echo "OK (${size_human}, ${cloud_status})"
+
+  RESULTS+=("{\"database\":\"${db_name}\",\"status\":\"success\",\"file\":\"${fileName}\",\"size_bytes\":${file_size},\"cloud_upload\":\"${cloud_status}\",\"error\":\"${cloud_error}\"}")
+  return 0
+}
+
+# Write status file from RESULTS array
 write_status() {
-  local status="$1"
-  local file="${2:-}"
-  local size="${3:-}"
-  local cloud="${4:-}"
-  local error="${5:-}"
+  local entries=""
+  for i in "${!RESULTS[@]}"; do
+    if [ "$i" -gt 0 ]; then
+      entries="${entries},"
+    fi
+    entries="${entries}
+    ${RESULTS[$i]}"
+  done
 
   cat > "$STATUS_FILE" << STATUSEOF
 {
-  "database": "${DB_NAME}",
-  "status": "${status}",
   "timestamp": "${START_TIME}",
-  "file": "${file}",
-  "size_bytes": ${size:-0},
-  "cloud_upload": "${cloud}",
-  "error": "${error}",
-  "bucket": "${BACKUP_BUCKET}"
+  "bucket": "${BACKUP_BUCKET}",
+  "databases": [${entries}
+  ]
 }
 STATUSEOF
 }
 
-# Run the dump inside db1, pipe to host
-if [ -z "${1:-}" ]; then
-  # Full backup using pg_dumpall (includes users/roles)
-  fileName="pg_dumpall_${CURRENT_DATE}.sql.gz"
-  if ! sudo incus exec "$DB_CONTAINER" -- sudo -u postgres pg_dumpall | gzip > "$BACKUP_DIRECTORY/$fileName" 2>/dev/null; then
-    write_status "failed" "$fileName" "0" "none" "pg_dumpall failed"
-    echo "Backup failed: pg_dumpall error"
-    exit 1
-  fi
+# Collect results
+RESULTS=()
+FAILURES=0
+
+if [ -n "${1:-}" ]; then
+  # Single database mode
+  backup_one "$1" "sudo -u postgres pg_dump $1" || FAILURES=$((FAILURES + 1))
 else
-  # Single database backup
-  fileName="${1}_${CURRENT_DATE}.sql.gz"
-  if ! sudo incus exec "$DB_CONTAINER" -- sudo -u postgres pg_dump "$1" | gzip > "$BACKUP_DIRECTORY/$fileName" 2>/dev/null; then
-    write_status "failed" "$fileName" "0" "none" "pg_dump failed for $1"
-    echo "Backup failed: pg_dump error for $1"
-    exit 1
-  fi
-fi
+  # Full backup mode: roles + all user databases
 
-# Verify the backup was created
-if [ ! -f "$BACKUP_DIRECTORY/$fileName" ] || [ ! -s "$BACKUP_DIRECTORY/$fileName" ]; then
-  write_status "failed" "$fileName" "0" "none" "backup file missing or empty"
-  echo "Backup failed: $fileName is missing or empty"
-  exit 1
-fi
+  # 1. Dump roles (users/passwords)
+  backup_one "roles" "sudo -u postgres pg_dumpall --roles-only" || FAILURES=$((FAILURES + 1))
 
-FILE_SIZE=$(stat -c%s "$BACKUP_DIRECTORY/$fileName" 2>/dev/null || stat -f%z "$BACKUP_DIRECTORY/$fileName" 2>/dev/null || echo "0")
-echo "Backup created: $BACKUP_DIRECTORY/$fileName ($(du -h "$BACKUP_DIRECTORY/$fileName" | cut -f1))"
+  # 2. List non-system databases and back up each
+  DB_LIST=$(sudo incus exec "$DB_CONTAINER" -- sudo -u postgres psql -At -c \
+    "SELECT datname FROM pg_database WHERE datistemplate = false AND datname NOT IN ('postgres')" 2>/dev/null || echo "")
 
-# Upload to cloud storage using the host's cloud CLI
-CLOUD_STATUS="none"
-CLOUD_ERROR=""
-if command -v gcloud &>/dev/null; then
-  if gcloud storage cp "$BACKUP_DIRECTORY/$fileName" "gs://${BACKUP_BUCKET}/${HOSTNAME}/$fileName" 2>/dev/null; then
-    CLOUD_STATUS="uploaded"
-    echo "Uploaded to gs://${BACKUP_BUCKET}/${HOSTNAME}/$fileName"
+  if [ -z "$DB_LIST" ]; then
+    echo "Warning: No user databases found"
   else
-    CLOUD_STATUS="failed"
-    CLOUD_ERROR="gcloud upload failed"
-    echo "Warning: Cloud upload failed"
+    while IFS= read -r db; do
+      [ -z "$db" ] && continue
+      backup_one "$db" "sudo -u postgres pg_dump $db" || FAILURES=$((FAILURES + 1))
+    done <<< "$DB_LIST"
   fi
-elif command -v aws &>/dev/null; then
-  if aws s3 cp "$BACKUP_DIRECTORY/$fileName" "s3://${BACKUP_BUCKET}/${HOSTNAME}/$fileName" 2>/dev/null; then
-    CLOUD_STATUS="uploaded"
-    echo "Uploaded to s3://${BACKUP_BUCKET}/${HOSTNAME}/$fileName"
-  else
-    CLOUD_STATUS="failed"
-    CLOUD_ERROR="aws s3 upload failed"
-    echo "Warning: Cloud upload failed"
-  fi
-else
-  CLOUD_STATUS="skipped"
-  CLOUD_ERROR="no cloud CLI found"
-  echo "Warning: No cloud CLI found — backup saved locally only"
 fi
 
-# Write final status
-write_status "success" "$fileName" "$FILE_SIZE" "$CLOUD_STATUS" "$CLOUD_ERROR"
+write_status
 
 # Delete local backups older than 30 days
 find "$BACKUP_DIRECTORY" -type f -name "*.sql.gz" -mtime +30 -delete
+
+if [ "$FAILURES" -gt 0 ]; then
+  echo "Backup completed with $FAILURES failure(s)"
+  exit 1
+fi
+
+echo "All backups completed successfully"

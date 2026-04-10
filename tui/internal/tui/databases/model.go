@@ -288,71 +288,91 @@ func (m Model) View() string {
 func getLastBackupInfo() string {
 	statusFile := "/var/lib/freedb/backup-status.json"
 	data, err := os.ReadFile(statusFile)
-	if err == nil {
-		var status struct {
+	if err != nil {
+		return "no backups found"
+	}
+
+	// Try new per-database format first
+	var multiStatus struct {
+		Timestamp string `json:"timestamp"`
+		Databases []struct {
 			Database    string `json:"database"`
 			Status      string `json:"status"`
-			Timestamp   string `json:"timestamp"`
 			File        string `json:"file"`
 			SizeBytes   int64  `json:"size_bytes"`
 			CloudUpload string `json:"cloud_upload"`
 			Error       string `json:"error"`
-		}
-		if json.Unmarshal(data, &status) == nil {
-			size := formatSize(status.SizeBytes)
-			cloud := status.CloudUpload
-			if cloud == "uploaded" {
-				cloud = "uploaded to cloud"
-			} else if cloud == "failed" {
-				cloud = "cloud upload FAILED"
-			} else if cloud == "skipped" {
-				cloud = "local only"
+		} `json:"databases"`
+	}
+	if json.Unmarshal(data, &multiStatus) == nil && len(multiStatus.Databases) > 0 {
+		succeeded := 0
+		failed := 0
+		var totalSize int64
+		cloudStatus := ""
+		for _, db := range multiStatus.Databases {
+			if db.Status == "success" {
+				succeeded++
+			} else {
+				failed++
 			}
-
-			result := fmt.Sprintf("%s — %s (%s, %s)", status.Status, status.File, size, cloud)
-			if status.Timestamp != "" {
-				result += " at " + status.Timestamp
+			totalSize += db.SizeBytes
+			if cloudStatus == "" {
+				cloudStatus = db.CloudUpload
+			} else if cloudStatus != db.CloudUpload {
+				cloudStatus = "mixed"
 			}
-			if status.Error != "" {
-				result += " [" + status.Error + "]"
-			}
-			return result
 		}
-	}
 
-	// Fallback: check backup directory for files
-	backupDir := "/var/lib/freedb/backups"
-	entries, err := os.ReadDir(backupDir)
-	if err != nil || len(entries) == 0 {
-		return "no backups found"
-	}
-
-	var newest os.DirEntry
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
+		cloud := cloudStatus
+		if cloud == "uploaded" {
+			cloud = "uploaded to cloud"
+		} else if cloud == "failed" {
+			cloud = "cloud upload FAILED"
+		} else if cloud == "skipped" {
+			cloud = "local only"
 		}
-		if newest == nil {
-			newest = e
-			continue
+
+		result := fmt.Sprintf("%d databases (%s, %s)", succeeded, formatSize(totalSize), cloud)
+		if failed > 0 {
+			result += fmt.Sprintf(" [%d failed]", failed)
 		}
-		ni, _ := newest.Info()
-		ei, _ := e.Info()
-		if ni != nil && ei != nil && ei.ModTime().After(ni.ModTime()) {
-			newest = e
+		if multiStatus.Timestamp != "" {
+			result += " at " + multiStatus.Timestamp
 		}
+		return result
 	}
 
-	if newest == nil {
-		return "no backups found"
+	// Fallback: old single-database format
+	var singleStatus struct {
+		Status      string `json:"status"`
+		Timestamp   string `json:"timestamp"`
+		File        string `json:"file"`
+		SizeBytes   int64  `json:"size_bytes"`
+		CloudUpload string `json:"cloud_upload"`
+		Error       string `json:"error"`
+	}
+	if json.Unmarshal(data, &singleStatus) == nil && singleStatus.Status != "" {
+		size := formatSize(singleStatus.SizeBytes)
+		cloud := singleStatus.CloudUpload
+		if cloud == "uploaded" {
+			cloud = "uploaded to cloud"
+		} else if cloud == "failed" {
+			cloud = "cloud upload FAILED"
+		} else if cloud == "skipped" {
+			cloud = "local only"
+		}
+
+		result := fmt.Sprintf("%s — %s (%s, %s)", singleStatus.Status, singleStatus.File, size, cloud)
+		if singleStatus.Timestamp != "" {
+			result += " at " + singleStatus.Timestamp
+		}
+		if singleStatus.Error != "" {
+			result += " [" + singleStatus.Error + "]"
+		}
+		return result
 	}
 
-	info, _ := newest.Info()
-	if info == nil {
-		return newest.Name()
-	}
-
-	return fmt.Sprintf("%s (%s, %s)", newest.Name(), formatSize(info.Size()), info.ModTime().Format("2006-01-02 15:04"))
+	return "no backups found"
 }
 
 func formatSize(bytes int64) string {
