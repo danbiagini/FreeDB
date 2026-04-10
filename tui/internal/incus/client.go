@@ -3,8 +3,10 @@ package incus
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 
@@ -404,6 +406,100 @@ func parseImageRef(imageRef string) (string, string) {
 	return "docker", alias
 }
 
+// checkImageArch inspects an OCI image and verifies it matches the host architecture.
+// Returns nil if the architecture matches or if inspection fails (best-effort check).
+func checkImageArch(ctx context.Context, imageRef string) error {
+	remote, alias := parseImageRef(imageRef)
+
+	// Build the full registry reference for skopeo
+	// skopeo needs docker:// style refs, not incus remote:alias format
+	var skopeoRef string
+	switch remote {
+	case "docker":
+		skopeoRef = "docker://docker.io/" + alias
+	default:
+		// For custom remotes, try to resolve the address
+		conf, err := cliconfig.LoadConfig("")
+		if err != nil {
+			return nil // best-effort
+		}
+		r, ok := conf.Remotes[remote]
+		if !ok {
+			return nil
+		}
+		host := strings.TrimPrefix(r.Addr, "https://")
+		host = strings.TrimPrefix(host, "http://")
+		skopeoRef = "docker://" + host + "/" + alias
+	}
+
+	cmd := exec.CommandContext(ctx, "skopeo", "inspect", "--raw", skopeoRef)
+	output, err := cmd.Output()
+	if err != nil {
+		return nil // best-effort: if skopeo fails, let incus handle it
+	}
+
+	// Check if it's a manifest list (multi-arch) or single manifest
+	var manifest struct {
+		MediaType string `json:"mediaType"`
+		// Single-arch fields
+		Config struct {
+			MediaType string `json:"mediaType"`
+		} `json:"config"`
+		// Multi-arch fields
+		Manifests []struct {
+			Platform struct {
+				Architecture string `json:"architecture"`
+				OS           string `json:"os"`
+			} `json:"platform"`
+		} `json:"manifests"`
+	}
+	if err := json.Unmarshal(output, &manifest); err != nil {
+		return nil
+	}
+
+	hostArch := runtime.GOARCH // amd64, arm64, etc.
+
+	// Multi-arch image: check if our arch is in the list
+	if len(manifest.Manifests) > 0 {
+		for _, m := range manifest.Manifests {
+			if m.Platform.Architecture == hostArch {
+				return nil
+			}
+		}
+		var available []string
+		for _, m := range manifest.Manifests {
+			if m.Platform.OS != "" {
+				available = append(available, m.Platform.OS+"/"+m.Platform.Architecture)
+			} else {
+				available = append(available, m.Platform.Architecture)
+			}
+		}
+		return fmt.Errorf("image %s is not available for %s (available: %s). Rebuild with: docker buildx build --platform linux/%s",
+			imageRef, hostArch, strings.Join(available, ", "), hostArch)
+	}
+
+	// Single-arch image: inspect the config to get architecture
+	cmd = exec.CommandContext(ctx, "skopeo", "inspect", skopeoRef)
+	output, err = cmd.Output()
+	if err != nil {
+		return nil
+	}
+
+	var inspectResult struct {
+		Architecture string `json:"Architecture"`
+	}
+	if err := json.Unmarshal(output, &inspectResult); err != nil {
+		return nil
+	}
+
+	if inspectResult.Architecture != "" && inspectResult.Architecture != hostArch {
+		return fmt.Errorf("image %s is built for %s but this host is %s. Rebuild with: docker buildx build --platform linux/%s",
+			imageRef, inspectResult.Architecture, hostArch, hostArch)
+	}
+
+	return nil
+}
+
 // LaunchOCI launches a container from an OCI image using the incus CLI.
 // The Go API's server-side pull doesn't handle authenticated registries correctly
 // (the daemon's skopeo context differs from the CLI's client-side pull).
@@ -414,6 +510,10 @@ func parseImageRef(imageRef string) (string, string) {
 //   - "gcr:project/repo/image:tag"
 //   - "us-central1-docker.pkg.dev/project/repo/image:tag"
 func (c *Client) LaunchOCI(ctx context.Context, name, imageRef string) error {
+	if err := checkImageArch(ctx, imageRef); err != nil {
+		return err
+	}
+
 	remote, alias := parseImageRef(imageRef)
 	ref := fmt.Sprintf("%s:%s", remote, alias)
 
@@ -429,6 +529,10 @@ func (c *Client) LaunchOCI(ctx context.Context, name, imageRef string) error {
 // InitOCI creates an OCI container without starting it.
 // Use this when you need to configure env vars before the app starts.
 func (c *Client) InitOCI(ctx context.Context, name, imageRef string) error {
+	if err := checkImageArch(ctx, imageRef); err != nil {
+		return err
+	}
+
 	remote, alias := parseImageRef(imageRef)
 	ref := fmt.Sprintf("%s:%s", remote, alias)
 
