@@ -3,7 +3,7 @@ package deploy
 import (
 	"testing"
 
-	"github.com/danbiagini/freedb-tui/internal/registry"
+	"github.com/danbiagini/FreeDB/tui/internal/registry"
 )
 
 func TestResolveImage(t *testing.T) {

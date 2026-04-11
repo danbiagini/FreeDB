@@ -6,7 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/danbiagini/freedb-tui/internal/registry"
+	"github.com/danbiagini/FreeDB/tui/internal/registry"
 )
 
 // key sends a KeyMsg to the model and returns the updated model.

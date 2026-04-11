@@ -1,4 +1,4 @@
-module github.com/danbiagini/freedb-tui
+module github.com/danbiagini/FreeDB/tui
 
 go 1.26.1
 

@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/danbiagini/freedb-tui/internal/incus"
+	"github.com/danbiagini/FreeDB/tui/internal/incus"
 )
 
 // ServiceMetrics holds per-service traffic stats from Traefik Prometheus metrics
