@@ -64,7 +64,7 @@ backup_one() {
 
   echo -n "Backing up ${db_name}... "
 
-  if ! sudo incus exec "$DB_CONTAINER" -- $dump_cmd | gzip > "$BACKUP_DIRECTORY/$fileName" 2>/dev/null; then
+  if ! sudo incus exec "$DB_CONTAINER" -- $dump_cmd < /dev/null | gzip > "$BACKUP_DIRECTORY/$fileName" 2>/dev/null; then
     echo "FAILED"
     RESULTS+=("{\"database\":\"${db_name}\",\"status\":\"failed\",\"file\":\"${fileName}\",\"size_bytes\":0,\"cloud_upload\":\"none\",\"error\":\"dump failed\"}")
     return 1
