@@ -245,8 +245,8 @@ func (m Model) View() string {
 		b.WriteString(fmt.Sprintf("  %-20s %-16s %-10s %s\n", "----", "-----", "----", "-----------"))
 		for i, d := range m.databases {
 			backup := ""
-			if bs, ok := backupMap[d.Name]; ok {
-				backup = bs
+			if info, ok := backupMap[d.Name]; ok {
+				backup = info.Summary
 			}
 			line := fmt.Sprintf("  %-20s %-16s %-10s %s", d.Name, d.Owner, d.Size, backup)
 			if i == m.selected {
@@ -255,6 +255,17 @@ func (m Model) View() string {
 				b.WriteString(line)
 			}
 			b.WriteString("\n")
+		}
+
+		// Show backup details for selected database
+		if m.selected < len(m.databases) {
+			if info, ok := backupMap[m.databases[m.selected].Name]; ok && info.LocalFile != "" {
+				b.WriteString(dimStyle.Render(fmt.Sprintf("\n  Local:  %s", info.LocalFile)))
+				if info.CloudPath != "" {
+					b.WriteString(dimStyle.Render(fmt.Sprintf("\n  Cloud:  %s", info.CloudPath)))
+				}
+				b.WriteString("\n")
+			}
 		}
 	}
 
@@ -290,9 +301,15 @@ func (m Model) View() string {
 	return b.String()
 }
 
-// getPerDBBackupStatus returns a map of database name → short status string.
-func getPerDBBackupStatus() map[string]string {
-	result := make(map[string]string)
+type dbBackupInfo struct {
+	Summary   string // short string for the table column
+	CloudPath string // cloud bucket path
+	LocalFile string // local file path
+}
+
+// getPerDBBackupStatus returns a map of database name → backup info.
+func getPerDBBackupStatus() map[string]dbBackupInfo {
+	result := make(map[string]dbBackupInfo)
 	statusFile := "/var/lib/freedb/backup-status.json"
 	data, err := os.ReadFile(statusFile)
 	if err != nil {
@@ -301,6 +318,7 @@ func getPerDBBackupStatus() map[string]string {
 
 	var status struct {
 		Timestamp string `json:"timestamp"`
+		Bucket    string `json:"bucket"`
 		Databases []struct {
 			Database    string `json:"database"`
 			Status      string `json:"status"`
@@ -314,27 +332,32 @@ func getPerDBBackupStatus() map[string]string {
 		return result
 	}
 
-	// Extract just the date portion from timestamp (e.g., "2026-04-11")
 	date := status.Timestamp
 	if len(date) >= 10 {
 		date = date[:10]
 	}
 
+	hostname, _ := os.Hostname()
+
 	for _, db := range status.Databases {
 		if db.Database == "roles" {
-			continue // don't show roles as a database backup
+			continue
 		}
+		info := dbBackupInfo{}
 		if db.Status == "success" {
 			cloud := ""
 			if db.CloudUpload == "uploaded" {
 				cloud = ", cloud"
+				info.CloudPath = fmt.Sprintf("%s/%s/%s", status.Bucket, hostname, db.File)
 			} else if db.CloudUpload == "failed" {
 				cloud = ", cloud FAILED"
 			}
-			result[db.Database] = fmt.Sprintf("%s (%s%s)", date, formatSize(db.SizeBytes), cloud)
+			info.Summary = fmt.Sprintf("%s (%s%s)", date, formatSize(db.SizeBytes), cloud)
+			info.LocalFile = fmt.Sprintf("/var/lib/freedb/backups/%s", db.File)
 		} else {
-			result[db.Database] = "FAILED"
+			info.Summary = "FAILED"
 		}
+		result[db.Database] = info
 	}
 
 	return result
