@@ -31,20 +31,25 @@ upload_to_cloud() {
   name=$(basename "$file")
   CLOUD_STATUS="none"
   CLOUD_ERROR=""
+  CLOUD_URL=""
 
   if command -v gcloud &>/dev/null; then
-    if gcloud storage cp "$file" "gs://${BACKUP_BUCKET}/${HOSTNAME}/$name" 2>/dev/null; then
+    CLOUD_URL="gs://${BACKUP_BUCKET}/${HOSTNAME}/$name"
+    if gcloud storage cp "$file" "$CLOUD_URL" 2>/dev/null; then
       CLOUD_STATUS="uploaded"
     else
       CLOUD_STATUS="failed"
       CLOUD_ERROR="gcloud upload failed"
+      CLOUD_URL=""
     fi
   elif command -v aws &>/dev/null; then
-    if aws s3 cp "$file" "s3://${BACKUP_BUCKET}/${HOSTNAME}/$name" 2>/dev/null; then
+    CLOUD_URL="s3://${BACKUP_BUCKET}/${HOSTNAME}/$name"
+    if aws s3 cp "$file" "$CLOUD_URL" 2>/dev/null; then
       CLOUD_STATUS="uploaded"
     else
       CLOUD_STATUS="failed"
       CLOUD_ERROR="aws s3 upload failed"
+      CLOUD_URL=""
     fi
   else
     CLOUD_STATUS="skipped"
@@ -81,12 +86,13 @@ backup_one() {
   upload_to_cloud "$BACKUP_DIRECTORY/$fileName"
   cloud_status="$CLOUD_STATUS"
   cloud_error="$CLOUD_ERROR"
+  local cloud_url="$CLOUD_URL"
 
   local size_human
   size_human=$(du -h "$BACKUP_DIRECTORY/$fileName" | cut -f1)
   echo "OK (${size_human}, ${cloud_status})"
 
-  RESULTS+=("{\"database\":\"${db_name}\",\"status\":\"success\",\"file\":\"${fileName}\",\"size_bytes\":${file_size},\"cloud_upload\":\"${cloud_status}\",\"error\":\"${cloud_error}\"}")
+  RESULTS+=("{\"database\":\"${db_name}\",\"status\":\"success\",\"file\":\"${fileName}\",\"size_bytes\":${file_size},\"cloud_upload\":\"${cloud_status}\",\"cloud_url\":\"${cloud_url}\",\"error\":\"${cloud_error}\"}")
   return 0
 }
 

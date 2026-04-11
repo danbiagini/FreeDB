@@ -318,13 +318,13 @@ func getPerDBBackupStatus() map[string]dbBackupInfo {
 
 	var status struct {
 		Timestamp string `json:"timestamp"`
-		Bucket    string `json:"bucket"`
 		Databases []struct {
 			Database    string `json:"database"`
 			Status      string `json:"status"`
 			File        string `json:"file"`
 			SizeBytes   int64  `json:"size_bytes"`
 			CloudUpload string `json:"cloud_upload"`
+			CloudURL    string `json:"cloud_url"`
 			Error       string `json:"error"`
 		} `json:"databases"`
 	}
@@ -337,8 +337,6 @@ func getPerDBBackupStatus() map[string]dbBackupInfo {
 		date = date[:10]
 	}
 
-	hostname, _ := os.Hostname()
-
 	for _, db := range status.Databases {
 		if db.Database == "roles" {
 			continue
@@ -348,7 +346,7 @@ func getPerDBBackupStatus() map[string]dbBackupInfo {
 			cloud := ""
 			if db.CloudUpload == "uploaded" {
 				cloud = ", cloud"
-				info.CloudPath = fmt.Sprintf("%s/%s/%s", status.Bucket, hostname, db.File)
+				info.CloudPath = db.CloudURL
 			} else if db.CloudUpload == "failed" {
 				cloud = ", cloud FAILED"
 			}
