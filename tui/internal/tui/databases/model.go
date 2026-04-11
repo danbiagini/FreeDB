@@ -240,10 +240,15 @@ func (m Model) View() string {
 		b.WriteString(dimStyle.Render("  No databases found"))
 		b.WriteString("\n")
 	} else {
-		b.WriteString(fmt.Sprintf("  %-20s %-16s %s\n", "NAME", "OWNER", "SIZE"))
-		b.WriteString(fmt.Sprintf("  %-20s %-16s %s\n", "----", "-----", "----"))
+		backupMap := getPerDBBackupStatus()
+		b.WriteString(fmt.Sprintf("  %-20s %-16s %-10s %s\n", "NAME", "OWNER", "SIZE", "LAST BACKUP"))
+		b.WriteString(fmt.Sprintf("  %-20s %-16s %-10s %s\n", "----", "-----", "----", "-----------"))
 		for i, d := range m.databases {
-			line := fmt.Sprintf("  %-20s %-16s %s", d.Name, d.Owner, d.Size)
+			backup := ""
+			if bs, ok := backupMap[d.Name]; ok {
+				backup = bs
+			}
+			line := fmt.Sprintf("  %-20s %-16s %-10s %s", d.Name, d.Owner, d.Size, backup)
 			if i == m.selected {
 				b.WriteString(selectedStyle.Render(line))
 			} else {
@@ -283,6 +288,56 @@ func (m Model) View() string {
 	b.WriteString(dimStyle.Render("  [a] Create database  [d] Drop database  [esc] Back"))
 
 	return b.String()
+}
+
+// getPerDBBackupStatus returns a map of database name → short status string.
+func getPerDBBackupStatus() map[string]string {
+	result := make(map[string]string)
+	statusFile := "/var/lib/freedb/backup-status.json"
+	data, err := os.ReadFile(statusFile)
+	if err != nil {
+		return result
+	}
+
+	var status struct {
+		Timestamp string `json:"timestamp"`
+		Databases []struct {
+			Database    string `json:"database"`
+			Status      string `json:"status"`
+			File        string `json:"file"`
+			SizeBytes   int64  `json:"size_bytes"`
+			CloudUpload string `json:"cloud_upload"`
+			Error       string `json:"error"`
+		} `json:"databases"`
+	}
+	if json.Unmarshal(data, &status) != nil || len(status.Databases) == 0 {
+		return result
+	}
+
+	// Extract just the date portion from timestamp (e.g., "2026-04-11")
+	date := status.Timestamp
+	if len(date) >= 10 {
+		date = date[:10]
+	}
+
+	for _, db := range status.Databases {
+		if db.Database == "roles" {
+			continue // don't show roles as a database backup
+		}
+		if db.Status == "success" {
+			cloud := ""
+			if db.CloudUpload == "uploaded" {
+				cloud = ", cloud"
+			} else if db.CloudUpload == "failed" {
+				cloud = ", cloud FAILED"
+			}
+			result[db.Database] = fmt.Sprintf("%s (%s%s)", date, formatSize(db.SizeBytes), cloud)
+		} else {
+			result[db.Database] = "FAILED"
+		}
+	}
+
+	return result
 }
 
 func getLastBackupInfo() string {
