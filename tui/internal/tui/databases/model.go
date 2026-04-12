@@ -22,6 +22,8 @@ const (
 	subviewCreateName
 	subviewCreateDone
 	subviewConfirmDrop
+	subviewRestoreSelect
+	subviewConfirmRestore
 )
 
 type listResult struct {
@@ -41,17 +43,19 @@ type actionResult struct {
 }
 
 type Model struct {
-	incusClient *incus.Client
-	subview     subview
-	databases   []db.DatabaseInfo
-	selected    int
-	nameInput   textinput.Model
-	lastCreated string
+	incusClient  *incus.Client
+	subview      subview
+	databases    []db.DatabaseInfo
+	selected     int
+	nameInput    textinput.Model
+	lastCreated  string
 	lastPassword string
-	message     string
-	err         error
-	done        bool
-	busy        bool
+	message      string
+	err          error
+	done         bool
+	busy         bool
+	backupFiles  []db.BackupFile
+	backupSel    int
 }
 
 func NewModel(ic *incus.Client) Model {
@@ -145,6 +149,19 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.subview = subviewConfirmDrop
 			}
 			return m, nil
+		case "r":
+			if len(m.databases) > 0 && m.selected < len(m.databases) {
+				files, err := db.ListBackupFiles(m.databases[m.selected].Name)
+				if err != nil || len(files) == 0 {
+					m.err = fmt.Errorf("no backups found for %s", m.databases[m.selected].Name)
+					return m, nil
+				}
+				m.backupFiles = files
+				m.backupSel = 0
+				m.err = nil
+				m.subview = subviewRestoreSelect
+			}
+			return m, nil
 		case "up", "k":
 			if m.selected > 0 {
 				m.selected--
@@ -192,6 +209,44 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.subview = subviewList
 			return m, nil
 		}
+
+	case subviewRestoreSelect:
+		switch key {
+		case "esc":
+			m.subview = subviewList
+			return m, nil
+		case "up", "k":
+			if m.backupSel > 0 {
+				m.backupSel--
+			}
+			return m, nil
+		case "down", "j":
+			if m.backupSel < len(m.backupFiles)-1 {
+				m.backupSel++
+			}
+			return m, nil
+		case "enter":
+			m.subview = subviewConfirmRestore
+			return m, nil
+		}
+
+	case subviewConfirmRestore:
+		switch key {
+		case "y":
+			if m.selected < len(m.databases) && m.backupSel < len(m.backupFiles) {
+				m.busy = true
+				m.subview = subviewList
+				return m, m.restoreDatabase(
+					m.databases[m.selected].Name,
+					m.backupFiles[m.backupSel].Path,
+				)
+			}
+			m.subview = subviewList
+			return m, nil
+		case "n", "esc":
+			m.subview = subviewRestoreSelect
+			return m, nil
+		}
 	}
 
 	return m, nil
@@ -233,6 +288,32 @@ func (m Model) View() string {
 			b.WriteString(errStyle.Render(fmt.Sprintf("  %v", m.err)) + "\n")
 		}
 		b.WriteString(dimStyle.Render("  [enter] Create  [esc] Cancel"))
+		return b.String()
+	}
+
+	if m.subview == subviewRestoreSelect || m.subview == subviewConfirmRestore {
+		dbName := ""
+		if m.selected < len(m.databases) {
+			dbName = m.databases[m.selected].Name
+		}
+		b.WriteString(fmt.Sprintf("  Restore %s from backup:\n\n", dbName))
+		for i, f := range m.backupFiles {
+			size := formatSize(f.Size)
+			line := fmt.Sprintf("  %s  (%s)", f.Date, size)
+			if i == m.backupSel {
+				b.WriteString(selectedStyle.Render(line))
+			} else {
+				b.WriteString(line)
+			}
+			b.WriteString("\n")
+		}
+		b.WriteString("\n")
+		if m.subview == subviewConfirmRestore {
+			b.WriteString(warnStyle.Render(fmt.Sprintf("  Restore %s from %s? This will DROP and recreate the database. [y/n]",
+				dbName, m.backupFiles[m.backupSel].Date)))
+		} else {
+			b.WriteString(dimStyle.Render("  [enter] Select  [esc] Cancel"))
+		}
 		return b.String()
 	}
 
@@ -296,7 +377,7 @@ func (m Model) View() string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(dimStyle.Render("  [a] Create database  [d] Drop database  [esc] Back"))
+	b.WriteString(dimStyle.Render("  [a] Create  [d] Drop  [r] Restore  [esc] Back"))
 
 	return b.String()
 }
@@ -486,5 +567,15 @@ func (m Model) dropDatabase(name string) tea.Cmd {
 			return actionResult{err: err}
 		}
 		return actionResult{msg: fmt.Sprintf("Database %q dropped", name)}
+	}
+}
+
+func (m Model) restoreDatabase(name, backupPath string) tea.Cmd {
+	ic := m.incusClient
+	return func() tea.Msg {
+		if err := db.RestoreDatabase(context.Background(), ic, name, backupPath); err != nil {
+			return actionResult{err: err}
+		}
+		return actionResult{msg: fmt.Sprintf("Database %q restored from %s", name, backupPath)}
 	}
 }

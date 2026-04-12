@@ -5,6 +5,8 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/danbiagini/FreeDB/tui/internal/incus"
@@ -107,6 +109,87 @@ func ListDatabases(ctx context.Context, ic *incus.Client) ([]DatabaseInfo, error
 	}
 
 	return dbs, nil
+}
+
+// BackupFile represents a local backup file for a database.
+type BackupFile struct {
+	Name string // filename
+	Date string // extracted date (YYYYMMDD)
+	Path string // full path
+	Size int64
+}
+
+// ListBackupFiles returns available backup files for a given database name,
+// sorted newest first.
+func ListBackupFiles(dbName string) ([]BackupFile, error) {
+	backupDir := "/var/lib/freedb/backups"
+	entries, err := os.ReadDir(backupDir)
+	if err != nil {
+		return nil, fmt.Errorf("reading backup directory: %w", err)
+	}
+
+	prefix := dbName + "_"
+	var files []BackupFile
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasPrefix(e.Name(), prefix) || !strings.HasSuffix(e.Name(), ".sql.gz") {
+			continue
+		}
+		// Extract date from filename: dbname_YYYYMMDD.sql.gz
+		datePart := strings.TrimPrefix(e.Name(), prefix)
+		datePart = strings.TrimSuffix(datePart, ".sql.gz")
+
+		info, _ := e.Info()
+		size := int64(0)
+		if info != nil {
+			size = info.Size()
+		}
+
+		files = append(files, BackupFile{
+			Name: e.Name(),
+			Date: datePart,
+			Path: backupDir + "/" + e.Name(),
+			Size: size,
+		})
+	}
+
+	// Sort newest first (dates are YYYYMMDD so reverse string sort works)
+	for i := 0; i < len(files); i++ {
+		for j := i + 1; j < len(files); j++ {
+			if files[j].Date > files[i].Date {
+				files[i], files[j] = files[j], files[i]
+			}
+		}
+	}
+
+	return files, nil
+}
+
+// RestoreDatabase restores a database from a gzipped SQL dump file.
+// It drops and recreates the database before restoring.
+func RestoreDatabase(ctx context.Context, ic *incus.Client, dbName, backupPath string) error {
+	// Drop existing database (ignore error if it doesn't exist)
+	_, _ = ic.Exec(ctx, dbContainer, []string{
+		"sudo", "-u", "postgres", "dropdb", "--if-exists", dbName,
+	})
+
+	// Recreate the database owned by the same user
+	_, err := ic.Exec(ctx, dbContainer, []string{
+		"sudo", "-u", "postgres", "createdb", "-O", dbName, dbName,
+	})
+	if err != nil {
+		return fmt.Errorf("recreating database %s: %w", dbName, err)
+	}
+
+	// Restore: gunzip the backup and pipe into psql via incus exec
+	// We run this on the host since the backup file is on the host filesystem
+	cmd := fmt.Sprintf("gunzip -c %s | sudo incus exec %s -- sudo -u postgres psql -d %s", backupPath, dbContainer, dbName)
+	execCmd := exec.CommandContext(ctx, "bash", "-c", cmd)
+	output, err := execCmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("restoring %s: %s", dbName, strings.TrimSpace(string(output)))
+	}
+
+	return nil
 }
 
 func GetDBConnectionString(dbIP, name, password string) string {
