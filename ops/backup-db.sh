@@ -18,7 +18,7 @@ BACKUP_DIRECTORY="/var/lib/freedb/backups"
 STATUS_FILE="/var/lib/freedb/backup-status.json"
 BACKUP_BUCKET="${FREEDB_BACKUP_BUCKET:-freedb-backup}"
 DB_CONTAINER="${FREEDB_DB_CONTAINER:-db1}"
-CURRENT_DATE=$(date "+%Y%m%d")
+CURRENT_DATE=$(date -u "+%Y%m%d_%H%M%SZ")
 HOSTNAME=$(hostname)
 START_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 

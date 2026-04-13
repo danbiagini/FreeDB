@@ -62,6 +62,8 @@ func main() {
 			os.Exit(0)
 		case "acme-email":
 			os.Exit(runAcmeEmail(os.Args[2:]))
+		case "restore":
+			os.Exit(runRestore(os.Args[2:]))
 		case "--help", "-h", "help":
 			printHelp()
 			os.Exit(0)
@@ -514,6 +516,101 @@ func runAcmeEmail(args []string) int {
 	return 0
 }
 
+func runRestore(args []string) int {
+	if len(args) < 1 || args[0] == "--help" || args[0] == "-h" {
+		fmt.Println("Usage: sudo freedb restore <database> [date]")
+		fmt.Println()
+		fmt.Println("Restore a database from a backup file.")
+		fmt.Println("If date is omitted, lists available backups.")
+		fmt.Println()
+		fmt.Println("Examples:")
+		fmt.Println("  sudo freedb restore mydb              List available backups")
+		fmt.Println("  sudo freedb restore mydb 20260411     Restore from specific date")
+		return 0
+	}
+
+	dbName := args[0]
+
+	files, err := db.ListBackupFiles(dbName)
+	if err != nil || len(files) == 0 {
+		fmt.Fprintf(os.Stderr, "No backups found for %s\n", dbName)
+		return 1
+	}
+
+	// No date: list available backups
+	if len(args) < 2 {
+		fmt.Printf("Available backups for %s:\n", dbName)
+		for _, f := range files {
+			size := ""
+			if f.Size > 1024*1024 {
+				size = fmt.Sprintf("%.1f MB", float64(f.Size)/(1024*1024))
+			} else if f.Size > 1024 {
+				size = fmt.Sprintf("%.1f KB", float64(f.Size)/1024)
+			} else {
+				size = fmt.Sprintf("%d B", f.Size)
+			}
+			fmt.Printf("  %s  (%s)  %s\n", f.Date, size, f.Path)
+		}
+		return 0
+	}
+
+	// Find matching backup
+	date := args[1]
+	var match *db.BackupFile
+	for i := range files {
+		if files[i].Date == date {
+			match = &files[i]
+			break
+		}
+	}
+	if match == nil {
+		fmt.Fprintf(os.Stderr, "No backup found for %s on %s\n", dbName, date)
+		return 1
+	}
+
+	fmt.Printf("Restoring %s from %s (%s)...\n", dbName, match.Date, match.Path)
+	fmt.Printf("WARNING: This will DROP and recreate the database.\n")
+	fmt.Print("Type 'yes' to confirm: ")
+	var confirm string
+	fmt.Scanln(&confirm)
+	if confirm != "yes" {
+		fmt.Println("Aborted.")
+		return 0
+	}
+
+	ic, err := incus.Connect("")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error connecting to incus: %v\n", err)
+		return 1
+	}
+
+	if err := db.RestoreDatabase(context.Background(), ic, dbName, match.Path); err != nil {
+		fmt.Fprintf(os.Stderr, "Restore failed: %v\n", err)
+		return 1
+	}
+
+	fmt.Printf("Database %s restored successfully.\n", dbName)
+
+	// Restart the app container that uses this database
+	reg, err := registry.Load("/etc/freedb/registry.json")
+	if err == nil {
+		for _, app := range reg.List() {
+			if app.HasDB && app.DBName == dbName {
+				cName := app.Name
+				if app.ContainerName != "" {
+					cName = app.ContainerName
+				}
+				fmt.Printf("Restarting %s...\n", cName)
+				ctx := context.Background()
+				_ = ic.StopContainer(ctx, cName)
+				_ = ic.StartContainer(ctx, cName)
+				break
+			}
+		}
+	}
+	return 0
+}
+
 func printHelp() {
 	fmt.Println("freedb — FreeDB app manager")
 	fmt.Println()
@@ -523,6 +620,7 @@ func printHelp() {
 	fmt.Println("  sudo freedb status APP   Show detailed app status")
 	fmt.Println("  sudo freedb deploy       Deploy/update an app (for CI/CD)")
 	fmt.Println("  sudo freedb destroy APP  Delete an app and all its resources")
+	fmt.Println("  sudo freedb restore DB [DATE]  Restore a database from backup")
 	fmt.Println("  sudo freedb upgrade      Run pending platform migrations")
 	fmt.Println("  sudo freedb acme-email [EMAIL]  Get or set Let's Encrypt notification email")
 	fmt.Println("  sudo freedb check        Run health checks")
