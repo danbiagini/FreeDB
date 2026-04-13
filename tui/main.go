@@ -590,6 +590,24 @@ func runRestore(args []string) int {
 	}
 
 	fmt.Printf("Database %s restored successfully.\n", dbName)
+
+	// Restart the app container that uses this database
+	reg, err := registry.Load("/etc/freedb/registry.json")
+	if err == nil {
+		for _, app := range reg.List() {
+			if app.HasDB && app.DBName == dbName {
+				cName := app.Name
+				if app.ContainerName != "" {
+					cName = app.ContainerName
+				}
+				fmt.Printf("Restarting %s...\n", cName)
+				ctx := context.Background()
+				_ = ic.StopContainer(ctx, cName)
+				_ = ic.StartContainer(ctx, cName)
+				break
+			}
+		}
+	}
 	return 0
 }
 

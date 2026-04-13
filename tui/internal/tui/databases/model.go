@@ -13,6 +13,7 @@ import (
 
 	"github.com/danbiagini/FreeDB/tui/internal/db"
 	"github.com/danbiagini/FreeDB/tui/internal/incus"
+	"github.com/danbiagini/FreeDB/tui/internal/registry"
 )
 
 type subview int
@@ -44,6 +45,7 @@ type actionResult struct {
 
 type Model struct {
 	incusClient  *incus.Client
+	registry     *registry.AppRegistry
 	subview      subview
 	databases    []db.DatabaseInfo
 	selected     int
@@ -58,13 +60,14 @@ type Model struct {
 	backupSel    int
 }
 
-func NewModel(ic *incus.Client) Model {
+func NewModel(ic *incus.Client, reg *registry.AppRegistry) Model {
 	input := textinput.New()
 	input.Placeholder = "mydb"
 	input.CharLimit = 30
 
 	return Model{
 		incusClient: ic,
+		registry:    reg,
 		subview:     subviewList,
 		nameInput:   input,
 	}
@@ -572,10 +575,30 @@ func (m Model) dropDatabase(name string) tea.Cmd {
 
 func (m Model) restoreDatabase(name, backupPath string) tea.Cmd {
 	ic := m.incusClient
+	reg := m.registry
 	return func() tea.Msg {
-		if err := db.RestoreDatabase(context.Background(), ic, name, backupPath); err != nil {
+		ctx := context.Background()
+		if err := db.RestoreDatabase(ctx, ic, name, backupPath); err != nil {
 			return actionResult{err: err}
 		}
-		return actionResult{msg: fmt.Sprintf("Database %q restored from %s", name, backupPath)}
+
+		// Restart the app container that uses this database
+		msg := fmt.Sprintf("Database %q restored", name)
+		if reg != nil {
+			for _, app := range reg.List() {
+				if app.HasDB && app.DBName == name {
+					cName := app.Name
+					if app.ContainerName != "" {
+						cName = app.ContainerName
+					}
+					_ = ic.StopContainer(ctx, cName)
+					_ = ic.StartContainer(ctx, cName)
+					msg += fmt.Sprintf(", restarted %s", cName)
+					break
+				}
+			}
+		}
+
+		return actionResult{msg: msg}
 	}
 }

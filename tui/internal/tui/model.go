@@ -90,7 +90,7 @@ func (m Model) updateDashboard(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.current = viewRemotes
 			return m, rm.Init()
 		case "D":
-			dbm := databases.NewModel(m.incus)
+			dbm := databases.NewModel(m.incus, m.registry)
 			m.dbs = &dbm
 			m.current = viewDatabases
 			return m, dbm.Init()
