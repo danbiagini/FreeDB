@@ -134,7 +134,7 @@ func ListBackupFiles(dbName string) ([]BackupFile, error) {
 		if e.IsDir() || !strings.HasPrefix(e.Name(), prefix) || !strings.HasSuffix(e.Name(), ".sql.gz") {
 			continue
 		}
-		// Extract date from filename: dbname_YYYYMMDD.sql.gz
+		// Extract timestamp from filename: dbname_YYYYMMDD_HHMMSSZ.sql.gz
 		datePart := strings.TrimPrefix(e.Name(), prefix)
 		datePart = strings.TrimSuffix(datePart, ".sql.gz")
 
