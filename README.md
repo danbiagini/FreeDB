@@ -1,23 +1,31 @@
 # FreeDB
 
-A self-hosting platform for deploying web applications on a single VM using [Linux Containers](https://linuxcontainers.org/) and a reverse proxy. Provision the infrastructure with OpenTofu, then install the platform with a single command. Manage everything through a terminal UI.
-
-## Why?
-
-I've been doing hobby/side projects for years and keep running into the same problems:
-
-1. **Serverless billing surprises.** Usage is bursty and you exceed quotas, or a user leaves a browser tab open and your Cloud Run instance stays up for days[^1].
-2. **Dormant projects rot.** When provisioned with ClickOps, there's no documentation for how the infrastructure works. Coming back after months means re-learning everything.
-3. **Free tiers aren't free.** They pause your service when nobody's using it, then it doesn't work the one time someone actually tries it.
-
-FreeDB takes a different approach: a **fixed-cost VM** running a lightweight container platform. You get predictable billing, your apps stay up, and the entire setup is automated and reproducible.
-
-## How It Works
+A complete app hosting platform on a single VM. Deploy containers, manage databases, get automatic HTTPS, and restore from backups — all from a terminal UI or CLI. No YAML files, no Kubernetes, no billing surprises.
 
 ```
 Internet → Static IP → Traefik (TLS) → App Containers (Incus)
                                       → PostgreSQL
 ```
+
+## Why not just use Docker?
+
+Docker gives you a container runtime. FreeDB gives you a **hosting platform**:
+
+- **ZFS storage** with snapshots, compression, and data integrity — not overlayfs
+- **System containers** alongside OCI containers — run full Ubuntu/Debian VMs for services like Redis
+- **Automatic HTTPS** with Let's Encrypt — no nginx configs or cert scripts
+- **Database provisioning** — creates the database, user, password, and injects `DATABASE_URL`
+- **Per-database backups** with cloud upload and one-command restore
+- **Single binary TUI** — SSH in, run `freedb`, press `[a]` to deploy. No compose files
+- **Platform upgrades** — versioned migrations that evolve the entire stack
+
+## Why not serverless?
+
+**Fixed-cost hosting.** One VM, predictable billing. No surprises when usage spikes or a browser tab keeps a connection open[^1]. Your apps stay up even when nobody's using them — no cold starts, no free-tier pausing.
+
+**Reproducible setup.** Provision infrastructure with OpenTofu, install with one command, manage with a TUI. Come back after six months and everything still makes sense.
+
+## How It Works
 
 - **[Incus](https://linuxcontainers.org/incus/)** manages lightweight containers on the host VM
 - **[Traefik](https://traefik.io/)** handles HTTPS, automatic Let's Encrypt certificates, and routing to apps
@@ -32,7 +40,7 @@ Internet → Static IP → Traefik (TLS) → App Containers (Incus)
 | Containers | Incus + ZFS |
 | Reverse Proxy | Traefik v3 with automatic TLS |
 | Database | PostgreSQL |
-| Backups | Nightly pg_dump to cloud storage (30-day retention) |
+| Backups | Nightly per-database pg_dump to cloud storage (30-day retention) |
 | App Manager | Go + Bubbletea TUI |
 
 ## TUI App Manager
@@ -49,27 +57,34 @@ FreeDB  test-freedb | GCP | 34.56.78.90 | 2 CPUs
   myapp         Running   whoami         myapp.example.com     12MB    <0.1%  47     0
   sportsoil     Running   sportsoil      sportsoil.stage       128MB   1.2%   312    0.1
 
-  [a] Add App  [enter] Manage  [R] Registries  [v] Version  [q] Quit
+  Mem: 434 MB  |  CPU: 5.6%  |  Disk: 8.2/50 GB (16%)
+
+  [a] Add App  [enter] Manage  [D] Databases  [R] Registries  [v] Version  [q] Quit
 ```
 
 ### Key Features
 
 - **Deploy apps** from Docker Hub, GCP Artifact Registry, AWS ECR, or any OCI registry
+- **System containers** — deploy Ubuntu/Debian system containers for services that don't need external routing
 - **Zero-downtime updates** — pull latest image, launch new container, switch Traefik route, then remove old container (blue-green deployment)
+- **Architecture detection** — checks OCI image architecture before pulling, shows clear error for mismatches
 - **Automatic TLS** — Let's Encrypt certificates provisioned and renewed automatically via Traefik
-- **Database provisioning** — creates PostgreSQL database + user, injects `DATABASE_URL` into the container
+- **Database management** — create, drop, and list databases from the TUI or CLI
+- **Per-database backups** — nightly backup of each database individually with cloud upload
+- **Database restore** — restore from backup via TUI or `freedb restore` CLI
 - **Environment variable management** — add, edit, delete env vars on running containers
-- **Live monitoring** — CPU%, memory, request counts, error rates from Traefik Prometheus metrics
+- **Live monitoring** — CPU%, memory, request counts, error rates, and storage pool usage
 - **Registry management** — configure private registries with authentication
 - **Health checks** — `freedb check` validates the entire platform stack
-- **CLI commands** — `freedb list`, `freedb status`, `freedb deploy`, `freedb destroy` for scripting and CI/CD
+- **CLI commands** — `freedb list`, `freedb status`, `freedb deploy`, `freedb destroy`, `freedb restore` for scripting and CI/CD
 - **Upgrades** — `freedb upgrade` runs versioned migrations with embedded scripts
 
 ### Install the TUI
 
 ```bash
-# Download the latest release
-curl -fsSL https://github.com/danbiagini/FreeDB/releases/latest/download/freedb-linux-amd64 -o /usr/local/bin/freedb
+# Download the latest release (linux/amd64, linux/arm64, or darwin/arm64)
+curl -fsSL https://github.com/danbiagini/FreeDB/releases/latest/download/freedb-linux-amd64 \
+  -o /usr/local/bin/freedb
 chmod +x /usr/local/bin/freedb
 
 # Or build from source
@@ -161,7 +176,14 @@ See [docs/multi-cloud-design.md](docs/multi-cloud-design.md) for the full design
 
 ## Backups
 
-PostgreSQL is backed up nightly at 3am via a cron job on the host. The backup runs `pg_dumpall` inside the db1 container and pipes the output to the host, then uploads to cloud storage.
+PostgreSQL databases are backed up individually every night at 3am via a cron job on the host. Each database gets its own compressed dump file, plus a roles-only dump for user/password recovery. Files are uploaded to cloud storage automatically.
+
+```
+/var/lib/freedb/backups/
+  roles_20260411_030000Z.sql.gz          # user/role definitions
+  mydb_20260411_030000Z.sql.gz           # individual database
+  another_20260411_030000Z.sql.gz        # individual database
+```
 
 Backups are stored at:
 - **Local**: `/var/lib/freedb/backups/` (30-day retention)
@@ -172,21 +194,27 @@ Backups are stored at:
 Backup settings are in `/opt/freedb/backup.env`:
 
 ```bash
-FREEDB_BACKUP_BUCKET=freedb-backup    # cloud storage bucket name
-FREEDB_DB_CONTAINER=db1               # incus container running PostgreSQL
+export FREEDB_BACKUP_BUCKET=freedb-backup    # cloud storage bucket name
+export FREEDB_DB_CONTAINER=db1               # incus container running PostgreSQL
 ```
 
-To customize the bucket name during install:
-```bash
-FREEDB_BACKUP_BUCKET=my-custom-bucket curl -fsSL https://raw.githubusercontent.com/danbiagini/FreeDB/main/install.sh | bash
-```
-
-### Manual backup
+### Manual backup and restore
 
 ```bash
-sudo /opt/freedb/backup-db.sh              # full backup (pg_dumpall)
-sudo /opt/freedb/backup-db.sh mydb         # single database backup
+# Back up all databases
+sudo bash -c '. /opt/freedb/backup.env && /opt/freedb/backup-db.sh'
+
+# Back up a single database
+sudo bash -c '. /opt/freedb/backup.env && /opt/freedb/backup-db.sh mydb'
+
+# List available backups for a database
+sudo freedb restore mydb
+
+# Restore from a specific backup (drops and recreates the database)
+sudo freedb restore mydb 20260411_030000Z
 ```
+
+Restore is also available in the TUI: press `[D]` for databases, select a database, press `[r]`.
 
 ## SSH Tunnel Access
 
@@ -215,7 +243,7 @@ gcloud compute ssh freedb --zone us-central1-a --tunnel-through-iap -- -L 8080:p
 FreeDB supports in-place upgrades via versioned migrations embedded in the binary:
 
 ```bash
-# Install the new binary
+# Install the new binary (or download from GitHub Releases)
 sudo cp freedb-linux-amd64 /usr/local/bin/freedb
 
 # Preview pending migrations
@@ -223,12 +251,16 @@ sudo freedb upgrade --dry-run
 
 # Run the upgrade
 sudo freedb upgrade
+
+# Retry from a specific version (if a migration failed)
+sudo freedb upgrade --from v0.4
 ```
 
 The upgrade system:
 - Tracks the installed version in `/etc/freedb/version`
 - Migration scripts are embedded in the binary (no repo clone needed)
 - Each migration is idempotent (safe to run multiple times)
+- On failure, prints clear retry instructions with `--from`
 - Existing installations without a version file are assumed to be v0.2
 
 ### Version History
@@ -236,7 +268,9 @@ The upgrade system:
 | Version | Changes |
 |---|---|
 | v0.2 | Initial release with TUI, multi-cloud support |
-| v0.3 | Security hardening: HTTPS redirect, PostgreSQL scram-sha-256 auth, Traefik dashboard access restricted to SSH tunnel |
+| v0.3 | Security hardening: HTTPS redirect, PostgreSQL scram-sha-256 auth, Traefik dashboard restricted to SSH tunnel |
+| v0.4 | Database management TUI, backup status tracking, configurable Let's Encrypt email |
+| v0.5 | Per-database backups, database restore (TUI + CLI), architecture detection, optional Traefik routing, resource summary dashboard, GitHub Releases |
 
 ## App Examples
 
@@ -244,11 +278,23 @@ The `apps/` directory contains example app configurations:
 
 - **[CVAT](apps/cvat/)** — Computer Vision Annotation Tool, deployed as a VM-based app with Docker. Includes Terraform example for dedicated GPU instances.
 
+### Let's Encrypt Email
+
+Configure the email used for certificate expiry notifications:
+
+```bash
+# Check current email
+sudo freedb acme-email
+
+# Set email
+sudo freedb acme-email you@example.com
+```
+
 ## Roadmap
 
 - **Background metrics collector** — systemd timer for daily traffic snapshots, enabling "Today" and "7d avg" columns. See [#6](https://github.com/danbiagini/FreeDB/issues/6).
 - **VM-based apps** — provision dedicated cloud VMs for GPU/ML workloads from the TUI.
-- **GitHub Releases** — prebuilt binaries for the TUI without needing Go installed.
+- **Ephemeral preview environments** — TTL-based containers with auto-cleanup for PR previews.
 
 ## References
 
