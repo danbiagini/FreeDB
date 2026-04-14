@@ -1,23 +1,31 @@
 # FreeDB
 
-A self-hosting platform for deploying web applications on a single VM using [Linux Containers](https://linuxcontainers.org/) and a reverse proxy. Provision the infrastructure with OpenTofu, then install the platform with a single command. Manage everything through a terminal UI.
-
-## Why?
-
-I've been doing hobby/side projects for years and keep running into the same problems:
-
-1. **Serverless billing surprises.** Usage is bursty and you exceed quotas, or a user leaves a browser tab open and your Cloud Run instance stays up for days[^1].
-2. **Dormant projects rot.** When provisioned with ClickOps, there's no documentation for how the infrastructure works. Coming back after months means re-learning everything.
-3. **Free tiers aren't free.** They pause your service when nobody's using it, then it doesn't work the one time someone actually tries it.
-
-FreeDB takes a different approach: a **fixed-cost VM** running a lightweight container platform. You get predictable billing, your apps stay up, and the entire setup is automated and reproducible.
-
-## How It Works
+A complete app hosting platform on a single VM. Deploy containers, manage databases, get automatic HTTPS, and restore from backups — all from a terminal UI or CLI. No YAML files, no Kubernetes, no billing surprises.
 
 ```
 Internet → Static IP → Traefik (TLS) → App Containers (Incus)
                                       → PostgreSQL
 ```
+
+## Why not just use Docker?
+
+Docker gives you a container runtime. FreeDB gives you a **hosting platform**:
+
+- **ZFS storage** with snapshots, compression, and data integrity — not overlayfs
+- **System containers** alongside OCI containers — run full Ubuntu/Debian VMs for services like Redis
+- **Automatic HTTPS** with Let's Encrypt — no nginx configs or cert scripts
+- **Database provisioning** — creates the database, user, password, and injects `DATABASE_URL`
+- **Per-database backups** with cloud upload and one-command restore
+- **Single binary TUI** — SSH in, run `freedb`, press `[a]` to deploy. No compose files
+- **Platform upgrades** — versioned migrations that evolve the entire stack
+
+## Why not serverless?
+
+**Fixed-cost hosting.** One VM, predictable billing. No surprises when usage spikes or a browser tab keeps a connection open[^1]. Your apps stay up even when nobody's using them — no cold starts, no free-tier pausing.
+
+**Reproducible setup.** Provision infrastructure with OpenTofu, install with one command, manage with a TUI. Come back after six months and everything still makes sense.
+
+## How It Works
 
 - **[Incus](https://linuxcontainers.org/incus/)** manages lightweight containers on the host VM
 - **[Traefik](https://traefik.io/)** handles HTTPS, automatic Let's Encrypt certificates, and routing to apps
