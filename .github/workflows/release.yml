@@ -8,8 +8,27 @@ permissions:
   contents: write
 
 jobs:
+  version-check:
+    name: Verify version alignment
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check migration version matches tag
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          MIGRATION_VERSION=$(grep -oP '"v[0-9]+\.[0-9]+"' tui/internal/upgrade/upgrade.go | tail -1 | tr -d '"')
+          echo "Git tag: $TAG"
+          echo "Latest migration: $MIGRATION_VERSION"
+          if [ "$TAG" != "$MIGRATION_VERSION" ]; then
+            echo "::error::Version mismatch! Tag is $TAG but latest migration is $MIGRATION_VERSION"
+            echo "See docs/release-process.md for the release process."
+            exit 1
+          fi
+
   build:
     name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+    needs: version-check
     runs-on: ubuntu-latest
     strategy:
       matrix:

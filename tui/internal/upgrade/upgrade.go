@@ -15,6 +15,9 @@ var migrationFS embed.FS
 //go:embed files/backup-db.sh
 var backupScript []byte
 
+//go:embed files/registry-auth.sh
+var registryAuthScript []byte
+
 const versionFile = "/etc/freedb/version"
 
 type Migration struct {
@@ -28,6 +31,7 @@ var migrations = []Migration{
 	{Version: "v0.4", Script: "v0.4.sh"},
 	{Version: "v0.5", Script: "v0.5.sh"},
 	{Version: "v0.6", Script: "v0.6.sh"},
+	{Version: "v0.7", Script: "v0.7.sh"},
 }
 
 // InstallBackupScript writes the embedded backup script to /opt/freedb/
@@ -37,6 +41,11 @@ func InstallBackupScript() error {
 		return err
 	}
 	return os.WriteFile(filepath.Join(dir, "backup-db.sh"), backupScript, 0755)
+}
+
+// InstallAuthScript writes the embedded registry auth script to /usr/local/bin/
+func InstallAuthScript() error {
+	return os.WriteFile("/usr/local/bin/freedb-registry-auth.sh", registryAuthScript, 0755)
 }
 
 func CurrentVersion() string {

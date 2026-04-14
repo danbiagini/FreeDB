@@ -60,6 +60,13 @@ func main() {
 			}
 			fmt.Println("Backup script installed to /opt/freedb/backup-db.sh")
 			os.Exit(0)
+		case "install-auth-script":
+			if err := upgrade.InstallAuthScript(); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Println("Registry auth script installed to /usr/local/bin/freedb-registry-auth.sh")
+			os.Exit(0)
 		case "acme-email":
 			os.Exit(runAcmeEmail(os.Args[2:]))
 		case "restore":
