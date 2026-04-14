@@ -10,6 +10,7 @@ type Config struct {
 	RegistryPath   string `json:"registry_path"`
 	ProxyContainer string `json:"proxy_container"`
 	DBContainer    string `json:"db_container"`
+	StoragePool    string `json:"storage_pool"`
 	IncusSocket    string `json:"incus_socket"`
 	Version        string `json:"-"`
 }
@@ -19,6 +20,7 @@ func DefaultConfig() *Config {
 		RegistryPath:   "/etc/freedb/registry.json",
 		ProxyContainer: "proxy1",
 		DBContainer:    "db1",
+		StoragePool:    "pd-standard",
 		IncusSocket:    "",
 	}
 }

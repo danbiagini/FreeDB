@@ -43,6 +43,8 @@ type refreshMsg struct {
 	containers  []containerData
 	cpuReadings map[string]float64
 	metrics     map[string]*traefik.ServiceMetrics
+	diskUsed    uint64
+	diskTotal   uint64
 	err         error
 }
 
@@ -59,6 +61,10 @@ type Model struct {
 	curMetrics  map[string]*traefik.ServiceMetrics
 	hostInfo    *config.HostInfo
 	showVersion bool
+	totalMemMB  int64
+	totalCPU    float64
+	diskUsed    uint64
+	diskTotal   uint64
 	err         error
 }
 
@@ -148,16 +154,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
+			// Update disk usage
+			m.diskUsed = msg.diskUsed
+			m.diskTotal = msg.diskTotal
+
 			// Build rows with latest cpuPercent
+			m.totalMemMB = 0
+			m.totalCPU = 0
 			var rows []table.Row
 			for _, cd := range msg.containers {
 				mem := "—"
 				if cd.info.MemUsageMB > 0 {
 					mem = fmt.Sprintf("%dMB", cd.info.MemUsageMB)
+					m.totalMemMB += cd.info.MemUsageMB
 				}
 
 				cpu := "—"
 				if pct, ok := m.cpuPercent[cd.info.Name]; ok && strings.EqualFold(cd.info.Status, "running") {
+					m.totalCPU += pct
 					if pct < 0.1 {
 						cpu = "<0.1%"
 					} else {
@@ -225,6 +239,29 @@ func (m Model) View() string {
 
 	b.WriteString(m.table.View())
 	b.WriteString("\n")
+
+	// Resource summary
+	var parts []string
+	if m.totalMemMB > 0 {
+		if m.totalMemMB >= 1024 {
+			parts = append(parts, fmt.Sprintf("Mem: %.1f GB", float64(m.totalMemMB)/1024))
+		} else {
+			parts = append(parts, fmt.Sprintf("Mem: %d MB", m.totalMemMB))
+		}
+	}
+	if m.totalCPU > 0 {
+		parts = append(parts, fmt.Sprintf("CPU: %.1f%%", m.totalCPU))
+	}
+	if m.diskTotal > 0 {
+		usedGB := float64(m.diskUsed) / (1024 * 1024 * 1024)
+		totalGB := float64(m.diskTotal) / (1024 * 1024 * 1024)
+		pct := float64(m.diskUsed) / float64(m.diskTotal) * 100
+		parts = append(parts, fmt.Sprintf("Disk: %.1f/%.0f GB (%.0f%%)", usedGB, totalGB, pct))
+	}
+	if len(parts) > 0 {
+		b.WriteString(helpStyle.Render("  " + strings.Join(parts, "  |  ")))
+		b.WriteString("\n")
+	}
 
 	if m.err != nil {
 		b.WriteString(errorStyle.Render(fmt.Sprintf("Error: %v", m.err)))
@@ -342,6 +379,15 @@ func (m Model) refresh() tea.Cmd {
 			})
 		}
 
-		return refreshMsg{containers: data, cpuReadings: cpuReadings, metrics: metrics}
+		// Fetch storage pool usage (best effort)
+		var diskUsed, diskTotal uint64
+		if m.cfg.StoragePool != "" {
+			if usage, err := m.incusClient.GetStoragePoolUsage(m.cfg.StoragePool); err == nil {
+				diskUsed = usage.UsedBytes
+				diskTotal = usage.TotalBytes
+			}
+		}
+
+		return refreshMsg{containers: data, cpuReadings: cpuReadings, metrics: metrics, diskUsed: diskUsed, diskTotal: diskTotal}
 	}
 }
