@@ -98,37 +98,23 @@ if [ -n "$KEY_FILE" ] && [ -f "$KEY_FILE" ]; then
 EOF
 elif [ "$CLOUD" = "gcp" ]; then
   echo "Setting up GCP credential helper for Artifact Registry"
+  REGISTRY_HOST="us-central1-docker.pkg.dev"
+  CRON_INTERVAL="*/45 * * * *"  # GCP tokens expire every hour
 
-  sudo tee /usr/local/bin/freedb-registry-auth.sh > /dev/null << 'HELPER'
-#!/bin/bash
-# Credential helper for GCP Artifact Registry
-# Outputs a valid auth.json — falls back to empty auths if token fetch fails
-TOKEN=$(curl -sf -H "Metadata-Flavor: Google" \
-  http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token \
-  | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])" 2>/dev/null || echo "")
+  sudo mkdir -p /opt/freedb
+  sudo tee /opt/freedb/registry-auth.env > /dev/null << EOF
+export FREEDB_CLOUD=gcp
+export FREEDB_REGISTRY_HOST=${REGISTRY_HOST}
+export FREEDB_AWS_REGION=
+EOF
 
-if [ -n "$TOKEN" ]; then
-  AUTH=$(echo -n "oauth2accesstoken:${TOKEN}" | base64 -w0)
-  cat << AUTHEOF
-{
-  "_updated": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "auths": {
-    "us-central1-docker.pkg.dev": {
-      "auth": "${AUTH}"
-    }
-  }
-}
-AUTHEOF
-else
-  echo "{\"_updated\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\", \"auths\": {}}"
-fi
-HELPER
+  # Install the generic auth script
+  sudo cp "${SCRIPT_DIR}/../../ops/registry-auth.sh" /usr/local/bin/freedb-registry-auth.sh
   sudo chmod +x /usr/local/bin/freedb-registry-auth.sh
 
   /usr/local/bin/freedb-registry-auth.sh | sudo -u incus tee /home/incus/.config/containers/auth.json > /dev/null
 
-  # Refresh the token every 45 minutes (expires every hour)
-  CRON_LINE="*/45 * * * * /usr/local/bin/freedb-registry-auth.sh > /home/incus/.config/containers/auth.json 2>/dev/null"
+  CRON_LINE="${CRON_INTERVAL} /usr/local/bin/freedb-registry-auth.sh > /home/incus/.config/containers/auth.json 2>/dev/null"
   EXISTING=$(sudo -u incus crontab -l 2>/dev/null | grep -v freedb-registry-auth || true)
   echo "${EXISTING:+$EXISTING
 }${CRON_LINE}" | sudo -u incus crontab -
@@ -142,7 +128,6 @@ elif [ "$CLOUD" = "aws" ]; then
   fi
 
   if command -v aws &>/dev/null; then
-    # Auto-detect AWS account ID and region
     AWS_REGION=$(curl -sf -m 2 -X PUT -H "X-aws-ec2-metadata-token-ttl-seconds: 10" \
       http://169.254.169.254/latest/api/token | \
       xargs -I{} curl -sf -H "X-aws-ec2-metadata-token: {}" \
@@ -159,28 +144,15 @@ elif [ "$CLOUD" = "aws" ]; then
         ECR_HOST="${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com"
         echo "Setting up AWS ECR credential helper for ${ECR_HOST}"
 
-        sudo tee /usr/local/bin/freedb-registry-auth.sh > /dev/null << HELPER
-#!/bin/bash
-# Credential helper for AWS ECR
-# Outputs a valid auth.json — falls back to empty auths if token fetch fails
-TOKEN=\$(aws ecr get-login-password --region ${AWS_REGION} 2>/dev/null || echo "")
+        sudo mkdir -p /opt/freedb
+        sudo tee /opt/freedb/registry-auth.env > /dev/null << EOF
+export FREEDB_CLOUD=aws
+export FREEDB_REGISTRY_HOST=${ECR_HOST}
+export FREEDB_AWS_REGION=${AWS_REGION}
+EOF
 
-if [ -n "\$TOKEN" ]; then
-  AUTH=\$(echo -n "AWS:\${TOKEN}" | base64 -w0)
-  cat << AUTHEOF
-{
-  "_updated": "\$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "auths": {
-    "${ECR_HOST}": {
-      "auth": "\${AUTH}"
-    }
-  }
-}
-AUTHEOF
-else
-  echo "{\"_updated\": \"\$(date -u +%Y-%m-%dT%H:%M:%SZ)\", \"auths\": {}}"
-fi
-HELPER
+        # Install the generic auth script
+        sudo cp "${SCRIPT_DIR}/../../ops/registry-auth.sh" /usr/local/bin/freedb-registry-auth.sh
         sudo chmod +x /usr/local/bin/freedb-registry-auth.sh
 
         /usr/local/bin/freedb-registry-auth.sh | sudo -u incus tee /home/incus/.config/containers/auth.json > /dev/null
