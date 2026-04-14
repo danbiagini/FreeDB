@@ -560,3 +560,21 @@ func (c *Client) WaitForIP(ctx context.Context, name string, timeout time.Durati
 	}
 	return "", fmt.Errorf("timeout waiting for IP on %s", name)
 }
+
+// StoragePoolUsage holds disk usage for a storage pool.
+type StoragePoolUsage struct {
+	UsedBytes  uint64
+	TotalBytes uint64
+}
+
+// GetStoragePoolUsage returns disk usage for the named storage pool.
+func (c *Client) GetStoragePoolUsage(poolName string) (*StoragePoolUsage, error) {
+	resources, err := c.conn.GetStoragePoolResources(poolName)
+	if err != nil {
+		return nil, fmt.Errorf("getting storage pool resources: %w", err)
+	}
+	return &StoragePoolUsage{
+		UsedBytes:  resources.Space.Used,
+		TotalBytes: resources.Space.Total,
+	}, nil
+}
