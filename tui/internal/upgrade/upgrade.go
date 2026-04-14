@@ -58,26 +58,33 @@ func LatestVersion() string {
 	return migrations[len(migrations)-1].Version
 }
 
-func PendingMigrations() []Migration {
-	current := CurrentVersion()
+func PendingFrom(from string) []Migration {
 	var pending []Migration
 	for _, m := range migrations {
-		if m.Version > current {
+		if m.Version > from {
 			pending = append(pending, m)
 		}
 	}
 	return pending
 }
 
-func Run(dryRun bool) int {
+func PendingMigrations() []Migration {
+	return PendingFrom(CurrentVersion())
+}
+
+func Run(dryRun bool, fromVersion string) int {
 	current := CurrentVersion()
+	if fromVersion != "" {
+		current = fromVersion
+		fmt.Printf("Overriding detected version with: %s\n", current)
+	}
 	latest := LatestVersion()
 
 	fmt.Printf("Current version: %s\n", current)
 	fmt.Printf("Target version:  %s\n", latest)
 	fmt.Println()
 
-	pending := PendingMigrations()
+	pending := PendingFrom(current)
 	if len(pending) == 0 {
 		fmt.Println("Already up to date.")
 		return 0
@@ -116,14 +123,22 @@ func Run(dryRun bool) int {
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: migration %s failed: %v\n", m.Version, err)
+			fmt.Fprintf(os.Stderr, "\nError: migration %s failed: %v\n", m.Version, err)
+			fmt.Fprintf(os.Stderr, "\nThe migration scripts are idempotent and safe to re-run.\n")
+			fmt.Fprintf(os.Stderr, "To retry this migration:\n")
+			fmt.Fprintf(os.Stderr, "  sudo freedb upgrade --from %s\n", current)
+			fmt.Fprintf(os.Stderr, "\nTo skip it and continue from the next version:\n")
+			fmt.Fprintf(os.Stderr, "  sudo freedb upgrade --from %s\n", m.Version)
 			return 1
 		}
 
-		// Update version file
+		// Update version file after each successful migration
 		os.MkdirAll(filepath.Dir(versionFile), 0755)
 		os.WriteFile(versionFile, []byte(m.Version+"\n"), 0644)
 		fmt.Printf("Updated version to %s\n\n", m.Version)
+
+		// Update current for error messages in subsequent iterations
+		current = m.Version
 	}
 
 	fmt.Println("Upgrade complete.")

@@ -450,20 +450,28 @@ func runDestroy(args []string) int {
 
 func runUpgrade(args []string) int {
 	dryRun := false
-	for _, a := range args {
+	fromVersion := ""
+	for i, a := range args {
 		if a == "--dry-run" {
 			dryRun = true
 		}
+		if a == "--from" && i+1 < len(args) {
+			fromVersion = args[i+1]
+		}
 		if a == "--help" || a == "-h" {
-			fmt.Println("Usage: sudo freedb upgrade [--dry-run]")
+			fmt.Println("Usage: sudo freedb upgrade [--dry-run] [--from VERSION]")
 			fmt.Println()
 			fmt.Println("Run pending platform migrations to upgrade FreeDB.")
 			fmt.Println("Migration scripts are embedded in the binary — no repo clone needed.")
+			fmt.Println()
+			fmt.Println("Options:")
+			fmt.Println("  --dry-run       Show pending migrations without running them")
+			fmt.Println("  --from VERSION  Override detected version (e.g., --from v0.3)")
 			return 0
 		}
 	}
 
-	return upgrade.Run(dryRun)
+	return upgrade.Run(dryRun, fromVersion)
 }
 
 func runAcmeEmail(args []string) int {
