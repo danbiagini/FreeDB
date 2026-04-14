@@ -107,11 +107,13 @@ func Update(ctx context.Context, params UpdateParams) (*UpdateResult, error) {
 	_ = ic.DeleteContainer(ctx, oldContainerName)
 
 	// 9. Rename new container back to the app name for stable .incus DNS
-	//    incus rename works on running containers — no stop/start needed
+	//    Incus requires the container to be stopped for rename
 	progress(fmt.Sprintf("Renaming %s -> %s...", newName, name))
+	_ = ic.StopContainer(ctx, newName)
 	if err := ic.RenameContainer(ctx, newName, name); err != nil {
-		// Rename failed — not fatal, keep the timestamped name
+		// Rename failed — start it back up with the old name
 		progress(fmt.Sprintf("Warning: rename failed (%v), keeping %s", err, newName))
+		_ = ic.StartContainer(ctx, newName)
 		_ = reg.UpdateIP(name, newIP)
 		_ = reg.UpdateImage(name, image)
 		_ = reg.UpdateContainerName(name, newName)
@@ -119,6 +121,17 @@ func Update(ctx context.Context, params UpdateParams) (*UpdateResult, error) {
 			NewContainer: newName,
 			NewIP:        newIP,
 		}, nil
+	}
+	_ = ic.StartContainer(ctx, name)
+
+	// Wait for IP after restart (may change)
+	if ip, err := ic.WaitForIP(ctx, name, 15*time.Second); err == nil {
+		newIP = ip
+	}
+
+	// Update Traefik route with new IP
+	if app.Domain != "" {
+		_ = traefik.PushRoute(ic, name, app.Domain, newIP, app.Port, app.TLS)
 	}
 
 	// 10. Update registry — container name is back to the app name
