@@ -106,13 +106,28 @@ func Update(ctx context.Context, params UpdateParams) (*UpdateResult, error) {
 	progress(fmt.Sprintf("Removing old container %s...", oldContainerName))
 	_ = ic.DeleteContainer(ctx, oldContainerName)
 
-	// 9. Update registry
+	// 9. Rename new container back to the app name for stable .incus DNS
+	//    incus rename works on running containers — no stop/start needed
+	progress(fmt.Sprintf("Renaming %s -> %s...", newName, name))
+	if err := ic.RenameContainer(ctx, newName, name); err != nil {
+		// Rename failed — not fatal, keep the timestamped name
+		progress(fmt.Sprintf("Warning: rename failed (%v), keeping %s", err, newName))
+		_ = reg.UpdateIP(name, newIP)
+		_ = reg.UpdateImage(name, image)
+		_ = reg.UpdateContainerName(name, newName)
+		return &UpdateResult{
+			NewContainer: newName,
+			NewIP:        newIP,
+		}, nil
+	}
+
+	// 10. Update registry — container name is back to the app name
 	_ = reg.UpdateIP(name, newIP)
 	_ = reg.UpdateImage(name, image)
-	_ = reg.UpdateContainerName(name, newName)
+	_ = reg.UpdateContainerName(name, name)
 
 	return &UpdateResult{
-		NewContainer: newName,
+		NewContainer: name,
 		NewIP:        newIP,
 	}, nil
 }
