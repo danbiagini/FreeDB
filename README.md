@@ -161,6 +161,80 @@ tofu apply -var-file=test.tfvars
 
 See `test.tfvars.example` for required variables.
 
+## CI/CD Deployment
+
+The `freedb deploy` CLI is designed for use in CI/CD pipelines. After your CI builds and pushes a container image, SSH to the FreeDB host and run `freedb deploy` to perform a zero-downtime update.
+
+### Deploy Command
+
+```bash
+# Update with a specific tag (uses existing image base from registry)
+sudo freedb deploy myapp --tag v1.2.3
+
+# Update with full image reference
+sudo freedb deploy myapp --image ecr:myapp:v1.2.3
+
+# Get JSON output for parsing
+sudo freedb deploy myapp --tag v1.2.3 --json
+
+# Preview what would happen
+sudo freedb deploy myapp --tag v1.2.3 --dry-run
+```
+
+### GitHub Actions Example
+
+```yaml
+name: Deploy to FreeDB
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Build and push your image (example with ECR)
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-2
+
+      - uses: aws-actions/amazon-ecr-login@v2
+        id: ecr
+
+      - name: Build and push
+        run: |
+          docker build -t ${{ steps.ecr.outputs.registry }}/myapp:${{ github.ref_name }} .
+          docker push ${{ steps.ecr.outputs.registry }}/myapp:${{ github.ref_name }}
+
+      # Deploy via SSH
+      - name: Deploy to FreeDB
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.FREEDB_HOST }}
+          username: ${{ secrets.FREEDB_USER }}
+          key: ${{ secrets.FREEDB_SSH_KEY }}
+          script: |
+            sudo freedb deploy myapp --tag ${{ github.ref_name }} --json
+```
+
+### Exit Codes
+
+- `0` — deploy succeeded
+- `1` — deploy failed (image pull, container start, route update, etc.)
+- `2` — app not found in registry
+
+### Tips
+
+- Use `--json` for machine-parseable output suitable for parsing in pipeline steps
+- The deploy holds a lock file, so concurrent deploys of the same app will fail safely
+- Container is renamed back to the app name after deploy, so `appname.incus` DNS stays stable
+- Old cached OCI images are cleaned up automatically after each deploy
+
 ## Multi-Cloud Support
 
 FreeDB runs on both GCP and AWS with automatic cloud detection:
