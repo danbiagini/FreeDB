@@ -1,0 +1,67 @@
+# Example GitHub Actions workflow for deploying to FreeDB
+# using a self-hosted runner inside the FreeDB network.
+#
+# Prerequisites:
+#   - Self-hosted runner set up via apps/gh-runner/setup.sh
+#   - App already added to FreeDB (sudo freedb, [a] to add)
+#   - Container image pushed to a registry accessible from the host (ECR, GCR, Docker Hub)
+
+name: Deploy to FreeDB
+
+on:
+  push:
+    tags: ['v*']
+
+  # Also allow manual deploys
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Image tag to deploy'
+        required: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.value }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "value=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Example: build and push to ECR
+      # Adjust for your registry (GCR, Docker Hub, etc.)
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-2
+
+      - uses: aws-actions/amazon-ecr-login@v2
+        id: ecr
+
+      - name: Build and push
+        run: |
+          TAG=${{ steps.tag.outputs.value }}
+          IMAGE=${{ steps.ecr.outputs.registry }}/myapp:${TAG}
+          docker build -t $IMAGE .
+          docker push $IMAGE
+
+  deploy:
+    needs: build
+    runs-on: [self-hosted, freedb]
+    steps:
+      - name: Deploy to FreeDB
+        run: |
+          ssh admin@10.0.0.1 "sudo freedb deploy myapp --tag ${{ needs.build.outputs.tag }} --json"
+
+      - name: Verify
+        run: |
+          ssh admin@10.0.0.1 "sudo freedb status myapp"
