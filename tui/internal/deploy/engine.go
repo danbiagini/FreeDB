@@ -117,6 +117,9 @@ func Update(ctx context.Context, params UpdateParams) (*UpdateResult, error) {
 		_ = reg.UpdateIP(name, newIP)
 		_ = reg.UpdateImage(name, image)
 		_ = reg.UpdateContainerName(name, newName)
+		if removed, err := ic.CleanupCachedImages(ctx); err == nil && removed > 0 {
+			progress(fmt.Sprintf("Cleaned up %d cached image(s)", removed))
+		}
 		return &UpdateResult{
 			NewContainer: newName,
 			NewIP:        newIP,
@@ -138,6 +141,11 @@ func Update(ctx context.Context, params UpdateParams) (*UpdateResult, error) {
 	_ = reg.UpdateIP(name, newIP)
 	_ = reg.UpdateImage(name, image)
 	_ = reg.UpdateContainerName(name, name)
+
+	// 11. Clean up cached images to prevent disk exhaustion
+	if removed, err := ic.CleanupCachedImages(ctx); err == nil && removed > 0 {
+		progress(fmt.Sprintf("Cleaned up %d cached image(s)", removed))
+	}
 
 	return &UpdateResult{
 		NewContainer: name,
