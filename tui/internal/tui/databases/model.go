@@ -578,25 +578,35 @@ func (m Model) restoreDatabase(name, backupPath string) tea.Cmd {
 	reg := m.registry
 	return func() tea.Msg {
 		ctx := context.Background()
-		if err := db.RestoreDatabase(ctx, ic, name, backupPath); err != nil {
-			return actionResult{err: err}
-		}
 
-		// Restart the app container that uses this database
-		msg := fmt.Sprintf("Database %q restored", name)
+		// Stop the app container first to prevent active connections
+		// from blocking the database drop
+		var appContainer string
 		if reg != nil {
 			for _, app := range reg.List() {
 				if app.HasDB && app.DBName == name {
-					cName := app.Name
+					appContainer = app.Name
 					if app.ContainerName != "" {
-						cName = app.ContainerName
+						appContainer = app.ContainerName
 					}
-					_ = ic.StopContainer(ctx, cName)
-					_ = ic.StartContainer(ctx, cName)
-					msg += fmt.Sprintf(", restarted %s", cName)
+					_ = ic.StopContainer(ctx, appContainer)
 					break
 				}
 			}
+		}
+
+		if err := db.RestoreDatabase(ctx, ic, name, backupPath); err != nil {
+			// Restart the app even if restore failed
+			if appContainer != "" {
+				_ = ic.StartContainer(ctx, appContainer)
+			}
+			return actionResult{err: err}
+		}
+
+		msg := fmt.Sprintf("Database %q restored", name)
+		if appContainer != "" {
+			_ = ic.StartContainer(ctx, appContainer)
+			msg += fmt.Sprintf(", restarted %s", appContainer)
 		}
 
 		return actionResult{msg: msg}
