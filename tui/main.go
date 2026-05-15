@@ -163,6 +163,18 @@ func startsWith(s, prefix string) bool {
 	return len(s) >= len(prefix) && s[:len(prefix)] == prefix
 }
 
+// primaryDomainDisplay returns the primary domain with "+N" if there are additional domains.
+func primaryDomainDisplay(app *registry.App) string {
+	domains := app.GetDomains()
+	if len(domains) == 0 {
+		return ""
+	}
+	if len(domains) == 1 {
+		return domains[0]
+	}
+	return fmt.Sprintf("%s +%d", domains[0], len(domains)-1)
+}
+
 func runList(args []string) int {
 	jsonOutput := false
 	for _, a := range args {
@@ -228,7 +240,7 @@ func runList(args []string) int {
 			infos = append(infos, appInfo{
 				Name:      app.Name,
 				Image:     app.Image,
-				Domain:    app.Domain,
+				Domain:    primaryDomainDisplay(app),
 				Status:    status,
 				Container: cName,
 				IP:        ip,
@@ -261,7 +273,7 @@ func runList(args []string) int {
 		if parts := strings.Split(img, "/"); len(parts) > 1 {
 			img = parts[len(parts)-1]
 		}
-		fmt.Printf("%-20s %-10s %-30s %s\n", app.Name, status, app.Domain, img)
+		fmt.Printf("%-20s %-10s %-30s %s\n", app.Name, status, primaryDomainDisplay(app), img)
 	}
 	return 0
 }
@@ -311,7 +323,7 @@ func runStatus(args []string) int {
 			"name":      app.Name,
 			"container": cName,
 			"image":     app.Image,
-			"domain":    app.Domain,
+			"domains":   app.GetDomains(),
 			"port":      app.Port,
 			"tls":       app.TLS,
 			"has_db":    app.HasDB,
@@ -333,7 +345,12 @@ func runStatus(args []string) int {
 	fmt.Printf("App:        %s\n", app.Name)
 	fmt.Printf("Container:  %s\n", cName)
 	fmt.Printf("Image:      %s\n", app.Image)
-	fmt.Printf("Domain:     %s\n", app.Domain)
+	domains := app.GetDomains()
+	if len(domains) == 1 {
+		fmt.Printf("Domain:     %s\n", domains[0])
+	} else if len(domains) > 1 {
+		fmt.Printf("Domains:    %s\n", strings.Join(domains, ", "))
+	}
 	fmt.Printf("Port:       %d\n", app.Port)
 	fmt.Printf("TLS:        %v\n", app.TLS)
 	if app.HasDB {
@@ -408,7 +425,9 @@ func runDestroy(args []string) int {
 	if !skipConfirm {
 		fmt.Printf("Delete app %q?\n", appName)
 		fmt.Printf("  Container: %s\n", cName)
-		fmt.Printf("  Domain:    %s\n", app.Domain)
+		if d := app.GetDomains(); len(d) > 0 {
+			fmt.Printf("  Domains:   %s\n", strings.Join(d, ", "))
+		}
 		if app.HasDB {
 			fmt.Printf("  Database:  %s (WILL BE DROPPED)\n", app.DBName)
 		}
@@ -599,29 +618,37 @@ func runRestore(args []string) int {
 		return 1
 	}
 
-	if err := db.RestoreDatabase(context.Background(), ic, dbName, match.Path); err != nil {
+	// Stop the app container before restoring to avoid active connection issues
+	ctx := context.Background()
+	var appContainer string
+	reg, err := registry.Load("/etc/freedb/registry.json")
+	if err == nil {
+		for _, app := range reg.List() {
+			if app.HasDB && app.DBName == dbName {
+				appContainer = app.Name
+				if app.ContainerName != "" {
+					appContainer = app.ContainerName
+				}
+				fmt.Printf("Stopping %s...\n", appContainer)
+				_ = ic.StopContainer(ctx, appContainer)
+				break
+			}
+		}
+	}
+
+	if err := db.RestoreDatabase(ctx, ic, dbName, match.Path); err != nil {
 		fmt.Fprintf(os.Stderr, "Restore failed: %v\n", err)
+		if appContainer != "" {
+			_ = ic.StartContainer(ctx, appContainer)
+		}
 		return 1
 	}
 
 	fmt.Printf("Database %s restored successfully.\n", dbName)
 
-	// Restart the app container that uses this database
-	reg, err := registry.Load("/etc/freedb/registry.json")
-	if err == nil {
-		for _, app := range reg.List() {
-			if app.HasDB && app.DBName == dbName {
-				cName := app.Name
-				if app.ContainerName != "" {
-					cName = app.ContainerName
-				}
-				fmt.Printf("Restarting %s...\n", cName)
-				ctx := context.Background()
-				_ = ic.StopContainer(ctx, cName)
-				_ = ic.StartContainer(ctx, cName)
-				break
-			}
-		}
+	if appContainer != "" {
+		fmt.Printf("Starting %s...\n", appContainer)
+		_ = ic.StartContainer(ctx, appContainer)
 	}
 	return 0
 }

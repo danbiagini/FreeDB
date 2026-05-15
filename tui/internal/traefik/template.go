@@ -2,6 +2,7 @@ package traefik
 
 import (
 	"bytes"
+	"strings"
 	"text/template"
 )
 
@@ -14,7 +15,7 @@ const routeTemplate = `http:
 {{- else}}
         - "web"
 {{- end}}
-      rule: "Host(` + "`" + `{{.Domain}}` + "`" + `)"
+      rule: "{{hostList .Domains}}"
       service: {{.Name}}
 {{- if .TLS}}
       tls:
@@ -28,15 +29,29 @@ const routeTemplate = `http:
 `
 
 type RouteData struct {
-	Name   string
-	Domain string
-	IP     string
-	Port   int
-	TLS    bool
+	Name    string
+	Domains []string
+	IP      string
+	Port    int
+	TLS     bool
+}
+
+// hostList renders domains as a Traefik v3 rule expression.
+// Single domain:  Host(`a.com`)
+// Multiple:       Host(`a.com`) || Host(`b.com`)
+func hostList(domains []string) string {
+	parts := make([]string, len(domains))
+	for i, d := range domains {
+		parts[i] = "Host(`" + d + "`)"
+	}
+	return strings.Join(parts, " || ")
 }
 
 func RenderRoute(data RouteData) ([]byte, error) {
-	tmpl, err := template.New("route").Parse(routeTemplate)
+	funcMap := template.FuncMap{
+		"hostList": hostList,
+	}
+	tmpl, err := template.New("route").Funcs(funcMap).Parse(routeTemplate)
 	if err != nil {
 		return nil, err
 	}

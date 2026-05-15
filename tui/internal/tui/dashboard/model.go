@@ -353,7 +353,13 @@ func (m Model) refresh() tea.Cmd {
 			if app, ok := registeredApps[c.Name]; ok {
 				isApp = true
 				displayName = app.Name // use app name, not container name
-				domain = app.Domain
+				domains := app.GetDomains()
+				if len(domains) > 0 {
+					domain = domains[0]
+					if len(domains) > 1 {
+						domain = fmt.Sprintf("%s +%d", domain, len(domains)-1)
+					}
+				}
 				img := app.Image
 				if parts := strings.Split(img, "/"); len(parts) > 1 {
 					img = parts[len(parts)-1]
@@ -363,8 +369,8 @@ func (m Model) refresh() tea.Cmd {
 				}
 
 				// IP drift detection
-				if c.IP != "" && c.IP != app.LastIP && app.Domain != "" {
-					_ = traefik.PushRoute(m.incusClient, app.Name, app.Domain, c.IP, app.Port, app.TLS)
+				if c.IP != "" && c.IP != app.LastIP && app.HasDomains() {
+					_ = traefik.PushRoute(m.incusClient, app.Name, app.GetDomains(), c.IP, app.Port, app.TLS)
 					_ = m.registry.UpdateIP(app.Name, c.IP)
 				}
 			}

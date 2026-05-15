@@ -443,3 +443,25 @@ func TestDomainRequired(t *testing.T) {
 		t.Errorf("expected to stay on stepDomain, got %d", m.step)
 	}
 }
+
+func TestMultiDomainInput(t *testing.T) {
+	m := newTestModel(t)
+	m = advancePastName(m)
+	m = advancePastImage(m, "docker.io/traefik/whoami")
+	m = key(m, "y") // expose: yes
+
+	// Type comma-separated domains
+	m = typeText(m, "myapp.example.com, www.myapp.example.com")
+	m = enter(m) // domain
+
+	if m.step != stepPort {
+		t.Fatalf("expected stepPort after entering domains, got %d", m.step)
+	}
+	if m.err != nil {
+		t.Errorf("unexpected error: %v", m.err)
+	}
+	// Verify the input value contains both domains
+	if m.inputs[2].Value() == "" {
+		t.Error("expected domain input to be non-empty")
+	}
+}

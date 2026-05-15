@@ -223,6 +223,84 @@ section "System Container (no Traefik)"
 prompt_action "In TUI: [a] -> name: 'test-sys' -> image: 'ubuntu/24.04/cloud' -> Expose via Traefik: n -> DB: n" "System container created without Traefik"
 prompt_action "Run: sudo freedb destroy test-sys --yes" "System container cleaned up"
 
+# ─── MULTI-DOMAIN ─────────────────────────────────────────────
+section "Multi-Domain Support"
+
+# Migration: existing apps should have domains array
+check "registry uses domains array" python3 -c "
+import json
+with open('/etc/freedb/registry.json') as f:
+    reg = json.load(f)
+apps = reg.get('apps', {})
+assert len(apps) > 0, 'no apps in registry'
+for name, app in apps.items():
+    assert 'domains' in app and len(app['domains']) > 0, f'{name} missing domains array'
+"
+
+# Traefik route files use v3 || syntax for multi-domain apps
+python3 - <<'EOF'
+import json, os, re, sys
+with open('/etc/freedb/registry.json') as f:
+    reg = json.load(f)
+bad = []
+for name, app in reg.get('apps', {}).items():
+    if len(app.get('domains', [])) > 1:
+        route = f'/etc/traefik/manual/{name}.yaml'
+        if os.path.exists(route):
+            content = open(route).read()
+            # v2 syntax: Host(`a`, `b`) — comma inside Host()
+            if re.search(r'Host\(`[^`]+`,', content):
+                bad.append(name)
+if bad:
+    print(f"FAIL: v2 Host() syntax found in routes for: {', '.join(bad)}", file=sys.stderr)
+    sys.exit(1)
+EOF
+if [ $? -eq 0 ]; then
+  green "multi-domain route files use Traefik v3 || syntax"
+else
+  red "multi-domain route files use Traefik v3 || syntax"
+fi
+
+# freedb status shows Domains (plural) for multi-domain apps
+MULTI_APP=$(python3 -c "
+import json
+with open('/etc/freedb/registry.json') as f:
+    reg = json.load(f)
+for name, app in reg.get('apps', {}).items():
+    if len(app.get('domains', [])) > 1:
+        print(name)
+        break
+" 2>/dev/null || echo "")
+
+if [ -n "$MULTI_APP" ]; then
+  check "freedb status shows Domains label for multi-domain app" \
+    bash -c "freedb status '$MULTI_APP' 2>&1 | grep -q '^Domains:'"
+  check "Traefik router enabled for multi-domain app" \
+    bash -c "incus exec proxy1 -- curl -s http://localhost:8080/api/http/routers/${MULTI_APP}-router@file 2>/dev/null | python3 -c \"import sys,json; d=json.load(sys.stdin); sys.exit(0 if d.get('status')=='enabled' else 1)\""
+else
+  yellow "no multi-domain apps to verify (deploy one to test)"
+fi
+
+# TUI: add app with comma-separated domains
+prompt_action "In TUI: [a] -> name: 'test-multi' -> any image -> Expose: y -> Domain: 'test1.example.com, test2.example.com' -> Port: 8080 -> TLS: n -> DB: n -> deploy" \
+  "Add app accepts comma-separated domains"
+
+if incus info test-multi &>/dev/null 2>&1; then
+  check "test-multi Traefik route uses || syntax" \
+    bash -c "incus exec proxy1 -- cat /etc/traefik/manual/test-multi.yaml 2>/dev/null | grep -q '||'"
+  check "freedb status shows both domains" \
+    bash -c "freedb status test-multi 2>&1 | grep -q 'test2.example.com'"
+  prompt_action "In TUI: [enter] on test-multi -> [o] -> [a] -> type 'test3.example.com' -> check TLS warning appears if TLS enabled -> [n] to cancel" \
+    "Domain editor TLS warning appears correctly"
+  prompt_action "In TUI: [enter] on test-multi -> [o] -> [d] on a domain -> [y] to confirm" \
+    "Domain editor remove works"
+  check "test-multi route updated after domain removal" \
+    bash -c "incus exec proxy1 -- curl -s http://localhost:8080/api/http/routers/test-multi-router@file | python3 -c \"import sys,json; d=json.load(sys.stdin); sys.exit(0 if d.get('status')=='enabled' else 1)\""
+  prompt_action "Run: sudo freedb destroy test-multi --yes" "test-multi cleaned up"
+else
+  yellow "test-multi not found — skipping domain editor checks"
+fi
+
 # ─── UPGRADE SYSTEM ───────────────────────────────────────────
 section "Upgrade System"
 check "version file exists" test -f /etc/freedb/version

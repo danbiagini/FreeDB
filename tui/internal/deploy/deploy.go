@@ -97,7 +97,7 @@ func Run(opts Options) int {
 		log("  (dry run — no changes made)")
 		log("  Would update %s from %s to %s", opts.AppName, app.Image, image)
 		log("  Container: %s", app.ContainerName)
-		log("  Domain: %s", app.Domain)
+		log("  Domains: %s", strings.Join(app.GetDomains(), ", "))
 		if opts.JSON {
 			r := Result{
 				Status:     "dry_run",

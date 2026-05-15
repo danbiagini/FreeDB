@@ -32,6 +32,7 @@ var migrations = []Migration{
 	{Version: "v0.5", Script: "v0.5.sh"},
 	{Version: "v0.6", Script: "v0.6.sh"},
 	{Version: "v0.7", Script: "v0.7.sh"},
+	{Version: "v1.0", Script: "v1.0.sh"},
 }
 
 // InstallBackupScript writes the embedded backup script to /opt/freedb/

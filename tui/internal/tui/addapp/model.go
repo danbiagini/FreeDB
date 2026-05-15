@@ -71,8 +71,8 @@ func NewModel(ic *incus.Client, reg *registry.AppRegistry, cfg *config.Config) M
 	inputs[1].CharLimit = 100
 
 	inputs[2] = textinput.New()
-	inputs[2].Placeholder = "myapp.example.com"
-	inputs[2].CharLimit = 100
+	inputs[2].Placeholder = "myapp.example.com, www.myapp.example.com"
+	inputs[2].CharLimit = 200
 
 	inputs[3] = textinput.New()
 	inputs[3].Placeholder = "8080"
@@ -365,11 +365,11 @@ func (m Model) View() string {
 	// External access summary
 	if m.step == stepConfirm {
 		if m.needsRoute {
-			domain := m.inputs[2].Value()
+			primaryDomain := strings.SplitN(strings.TrimSpace(m.inputs[2].Value()), ",", 2)[0]
 			if m.tls {
-				b.WriteString(dimStyle.Render(fmt.Sprintf("\n  External: https://%s (port 443, TLS via Let's Encrypt)", domain)))
+				b.WriteString(dimStyle.Render(fmt.Sprintf("\n  External: https://%s (port 443, TLS via Let's Encrypt)", primaryDomain)))
 			} else {
-				b.WriteString(dimStyle.Render(fmt.Sprintf("\n  External: http://%s (port 80, no TLS)", domain)))
+				b.WriteString(dimStyle.Render(fmt.Sprintf("\n  External: http://%s (port 80, no TLS)", primaryDomain)))
 			}
 		} else {
 			b.WriteString(dimStyle.Render("\n  Internal only — no external routing"))
@@ -387,11 +387,11 @@ func (m Model) View() string {
 		} else {
 			b.WriteString("\n" + successStyle.Render("  "+m.deployMsg) + "\n")
 			if m.needsRoute {
-				domain := m.inputs[2].Value()
+				primaryDomain := strings.SplitN(strings.TrimSpace(m.inputs[2].Value()), ",", 2)[0]
 				if m.tls {
-					b.WriteString(dimStyle.Render(fmt.Sprintf("  Access at: https://%s", domain)) + "\n")
+					b.WriteString(dimStyle.Render(fmt.Sprintf("  Access at: https://%s", primaryDomain)) + "\n")
 				} else {
-					b.WriteString(dimStyle.Render(fmt.Sprintf("  Access at: http://%s", domain)) + "\n")
+					b.WriteString(dimStyle.Render(fmt.Sprintf("  Access at: http://%s", primaryDomain)) + "\n")
 				}
 			}
 		}
@@ -413,7 +413,13 @@ func (m Model) View() string {
 func (m Model) deploy() tea.Cmd {
 	name := strings.TrimSpace(m.inputs[0].Value())
 	image := strings.TrimSpace(m.inputs[1].Value())
-	domain := strings.TrimSpace(m.inputs[2].Value())
+	var domains []string
+	for _, d := range strings.Split(m.inputs[2].Value(), ",") {
+		d = strings.TrimSpace(d)
+		if d != "" {
+			domains = append(domains, d)
+		}
+	}
 	portStr := strings.TrimSpace(m.inputs[3].Value())
 	needsRoute := m.needsRoute
 	needsDB := m.needsDB
@@ -510,8 +516,8 @@ func (m Model) deploy() tea.Cmd {
 		}
 
 		// 6. Create Traefik route (skip for internal-only containers)
-		if needsRoute {
-			if err := traefik.PushRoute(ic, name, domain, ip, port, tls); err != nil {
+		if needsRoute && len(domains) > 0 {
+			if err := traefik.PushRoute(ic, name, domains, ip, port, tls); err != nil {
 				return deployResult{err: fmt.Errorf("creating route: %w", err)}
 			}
 		}
@@ -528,7 +534,6 @@ func (m Model) deploy() tea.Cmd {
 			Name:      name,
 			Type:      registry.AppTypeContainer,
 			Image:     image,
-			Domain:    domain,
 			Port:      port,
 			TLS:       tls,
 			HasDB:     needsDB,
@@ -539,6 +544,7 @@ func (m Model) deploy() tea.Cmd {
 			LastIP:    ip,
 			CreatedAt: time.Now(),
 		}
+		app.SetDomains(domains)
 		if err := reg.Add(app); err != nil {
 			return deployResult{err: fmt.Errorf("saving to registry: %w", err)}
 		}
