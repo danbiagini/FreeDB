@@ -94,9 +94,9 @@ func Update(ctx context.Context, params UpdateParams) (*UpdateResult, error) {
 	progress(fmt.Sprintf("Container running at %s", newIP))
 
 	// 7. Switch Traefik route
-	if app.Domain != "" {
+	if app.HasDomains() {
 		progress("Switching Traefik route...")
-		if err := traefik.PushRoute(ic, name, app.Domain, newIP, app.Port, app.TLS); err != nil {
+		if err := traefik.PushRoute(ic, name, app.GetDomains(), newIP, app.Port, app.TLS); err != nil {
 			_ = ic.DeleteContainer(ctx, newName)
 			return nil, fmt.Errorf("updating route: %w", err)
 		}
@@ -133,8 +133,8 @@ func Update(ctx context.Context, params UpdateParams) (*UpdateResult, error) {
 	}
 
 	// Update Traefik route with new IP
-	if app.Domain != "" {
-		_ = traefik.PushRoute(ic, name, app.Domain, newIP, app.Port, app.TLS)
+	if app.HasDomains() {
+		_ = traefik.PushRoute(ic, name, app.GetDomains(), newIP, app.Port, app.TLS)
 	}
 
 	// 10. Update registry — container name is back to the app name

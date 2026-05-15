@@ -33,6 +33,10 @@ const (
 	subviewEnvVarAdd
 	subviewEnvVarConfirmDelete
 	subviewEnvVarRestartPrompt
+	subviewDomains
+	subviewDomainAdd
+	subviewDomainConfirmDelete
+	subviewDomainTLSWarn
 )
 
 type actionResult struct {
@@ -54,6 +58,11 @@ type detailResult struct {
 
 type envVarsResult struct {
 	envVars map[string]string
+	err     error
+}
+
+type domainUpdateResult struct {
+	domains []string
 	err     error
 }
 
@@ -81,6 +90,13 @@ type Model struct {
 	envKeys     []string // sorted keys for display
 	envSelected int
 	envInput    textinput.Model
+	// Domain editor
+	domainList     []string
+	domainSelected int
+	domainInput    textinput.Model
+	domainPending  string // domain awaiting TLS confirmation
+	// Terminal size
+	height int
 }
 
 func NewModel(appName string, app *registry.App, isSystem bool, ic *incus.Client, reg *registry.AppRegistry, width, height int) Model {
@@ -100,6 +116,7 @@ func NewModel(appName string, app *registry.App, isSystem bool, ic *incus.Client
 		registry:    reg,
 		subview:     subviewMenu,
 		viewport:    vp,
+		height:      height,
 	}
 }
 
@@ -153,6 +170,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case domainUpdateResult:
+		m.busy = false
+		if msg.err != nil {
+			m.err = msg.err
+		} else {
+			m.domainList = msg.domains
+			if m.app != nil {
+				m.app.SetDomains(msg.domains)
+			}
+			m.err = nil
+		}
+		m.subview = subviewDomains
+		return m, nil
+
 	case actionResult:
 		m.busy = false
 		if msg.err != nil {
@@ -195,6 +226,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.viewport.Width = msg.Width - 4
 		m.viewport.Height = msg.Height - 6
+		m.height = msg.Height
 	}
 
 	if m.subview == subviewLogs {
@@ -336,6 +368,19 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.err = nil
 			return m, m.fetchEnvVars()
 
+		case "o":
+			if m.isSystem || m.app == nil {
+				return m, nil
+			}
+			m.domainList = m.app.GetDomains()
+			if m.domainSelected >= len(m.domainList) {
+				m.domainSelected = 0
+			}
+			m.message = ""
+			m.err = nil
+			m.subview = subviewDomains
+			return m, nil
+
 		case "u":
 			if m.isSystem || m.app == nil {
 				return m, nil
@@ -453,6 +498,100 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.subview = subviewEnvVars
 			return m, nil
 		}
+
+	case subviewDomains:
+		switch key {
+		case "esc":
+			m.subview = subviewMenu
+			return m, nil
+		case "a":
+			m.domainInput = textinput.New()
+			m.domainInput.Placeholder = "myapp.example.com"
+			m.domainInput.CharLimit = 100
+			m.domainInput.Focus()
+			m.err = nil
+			m.subview = subviewDomainAdd
+			return m, textinput.Blink
+		case "d":
+			if len(m.domainList) > 0 && m.domainSelected < len(m.domainList) {
+				m.subview = subviewDomainConfirmDelete
+			}
+			return m, nil
+		case "up", "k":
+			if m.domainSelected > 0 {
+				m.domainSelected--
+			}
+			return m, nil
+		case "down", "j":
+			if m.domainSelected < len(m.domainList)-1 {
+				m.domainSelected++
+			}
+			return m, nil
+		}
+
+	case subviewDomainAdd:
+		switch key {
+		case "esc":
+			m.subview = subviewDomains
+			return m, nil
+		case "enter":
+			val := strings.TrimSpace(m.domainInput.Value())
+			if val == "" {
+				m.subview = subviewDomains
+				return m, nil
+			}
+			m.err = nil
+			if m.app != nil && m.app.TLS {
+				// Warn before touching a TLS-enabled app's route.
+				m.domainPending = val
+				m.subview = subviewDomainTLSWarn
+				return m, nil
+			}
+			newDomains := append(append([]string{}, m.domainList...), val)
+			m.busy = true
+			return m, m.pushDomainUpdate(newDomains)
+		}
+		var cmd tea.Cmd
+		m.domainInput, cmd = m.domainInput.Update(msg)
+		return m, cmd
+
+	case subviewDomainTLSWarn:
+		switch key {
+		case "y":
+			newDomains := append(append([]string{}, m.domainList...), m.domainPending)
+			m.domainPending = ""
+			m.busy = true
+			m.subview = subviewDomains
+			return m, m.pushDomainUpdate(newDomains)
+		case "n", "esc":
+			m.domainPending = ""
+			m.subview = subviewDomains
+			return m, nil
+		}
+		return m, nil
+
+	case subviewDomainConfirmDelete:
+		switch key {
+		case "y":
+			if m.domainSelected < len(m.domainList) {
+				newDomains := make([]string, 0, len(m.domainList)-1)
+				for i, d := range m.domainList {
+					if i != m.domainSelected {
+						newDomains = append(newDomains, d)
+					}
+				}
+				if m.domainSelected > 0 {
+					m.domainSelected--
+				}
+				m.busy = true
+				return m, m.pushDomainUpdate(newDomains)
+			}
+			m.subview = subviewDomains
+			return m, nil
+		case "n", "esc":
+			m.subview = subviewDomains
+			return m, nil
+		}
 	}
 
 	return m, nil
@@ -489,6 +628,94 @@ func (m Model) View() string {
 		return b.String()
 	}
 
+	if m.subview == subviewDomainTLSWarn {
+		b.WriteString(titleStyle.Render(fmt.Sprintf("Domains: %s", m.appName)))
+		b.WriteString("\n\n")
+		b.WriteString(warnStyle.Render("  ! TLS is enabled on this app."))
+		b.WriteString("\n\n")
+		if len(m.domainList) > 0 {
+			b.WriteString(warnStyle.Render(fmt.Sprintf(
+				"  Adding %q requires that domain to already resolve to this\n"+
+					"  server. If Let's Encrypt cannot reach it, the ACME challenge\n"+
+					"  will fail and HTTPS will break for ALL domains on this app,\n"+
+					"  including existing ones.",
+				m.domainPending,
+			)))
+		} else {
+			b.WriteString(warnStyle.Render(fmt.Sprintf(
+				"  %q must already resolve to this server before\n"+
+					"  Let's Encrypt can issue a certificate.",
+				m.domainPending,
+			)))
+		}
+		b.WriteString("\n\n")
+		b.WriteString("  Confirm DNS is pointing here before proceeding.\n\n")
+		b.WriteString("  [y] Add anyway   [n] Cancel\n")
+		return b.String()
+	}
+
+	if m.subview == subviewDomains || m.subview == subviewDomainAdd || m.subview == subviewDomainConfirmDelete {
+		b.WriteString(titleStyle.Render(fmt.Sprintf("Domains: %s", m.appName)))
+		b.WriteString("\n\n")
+
+		if len(m.domainList) == 0 {
+			b.WriteString(dimStyle.Render("  No domains configured"))
+			b.WriteString("\n")
+		} else {
+			selectedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("229")).Background(lipgloss.Color("57"))
+			maxDom := m.height - 10
+			if maxDom < 3 {
+				maxDom = 3
+			}
+			domStart, domEnd := visibleRange(len(m.domainList), m.domainSelected, maxDom)
+			if domStart > 0 {
+				b.WriteString(dimStyle.Render(fmt.Sprintf("  ↑ %d more", domStart)))
+				b.WriteString("\n")
+			}
+			for i := domStart; i < domEnd; i++ {
+				d := m.domainList[i]
+				line := fmt.Sprintf("  %s", d)
+				if i == m.domainSelected {
+					b.WriteString(selectedStyle.Render(line))
+				} else {
+					b.WriteString(line)
+				}
+				b.WriteString("\n")
+			}
+			if domEnd < len(m.domainList) {
+				b.WriteString(dimStyle.Render(fmt.Sprintf("  ↓ %d more", len(m.domainList)-domEnd)))
+				b.WriteString("\n")
+			}
+		}
+
+		b.WriteString("\n")
+
+		if m.subview == subviewDomainAdd {
+			b.WriteString(fmt.Sprintf("  %s\n", m.domainInput.View()))
+		}
+
+		if m.subview == subviewDomainConfirmDelete && m.domainSelected < len(m.domainList) {
+			b.WriteString(warnStyle.Render(fmt.Sprintf("  Remove %s? [y/n]", m.domainList[m.domainSelected])))
+			b.WriteString("\n")
+		}
+
+		if m.busy {
+			b.WriteString("  Working...\n")
+		}
+		if m.err != nil {
+			b.WriteString(errStyle.Render(fmt.Sprintf("  %v", m.err)) + "\n")
+		}
+		if m.message != "" {
+			b.WriteString(successStyle.Render("  "+m.message) + "\n")
+		}
+
+		b.WriteString("\n")
+		b.WriteString(dimStyle.Render("  [a] Add  [d] Remove  [esc] Back"))
+		b.WriteString("\n")
+		b.WriteString(dimStyle.Render("  Note: Traefik route will be updated immediately"))
+		return b.String()
+	}
+
 	if m.subview == subviewEnvVars || m.subview == subviewEnvVarAdd || m.subview == subviewEnvVarConfirmDelete {
 		b.WriteString(titleStyle.Render(fmt.Sprintf("Environment: %s", m.appName)))
 		b.WriteString("\n\n")
@@ -498,7 +725,17 @@ func (m Model) View() string {
 			b.WriteString("\n")
 		} else {
 			selectedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("229")).Background(lipgloss.Color("57"))
-			for i, k := range m.envKeys {
+			maxEnv := m.height - 10 // title + input + status + help lines + padding
+			if maxEnv < 3 {
+				maxEnv = 3
+			}
+			eStart, eEnd := visibleRange(len(m.envKeys), m.envSelected, maxEnv)
+			if eStart > 0 {
+				b.WriteString(dimStyle.Render(fmt.Sprintf("  ↑ %d more", eStart)))
+				b.WriteString("\n")
+			}
+			for i := eStart; i < eEnd; i++ {
+				k := m.envKeys[i]
 				v := m.envVars[k]
 				line := fmt.Sprintf("  %-24s = %s", k, v)
 				if i == m.envSelected {
@@ -506,6 +743,10 @@ func (m Model) View() string {
 				} else {
 					b.WriteString(line)
 				}
+				b.WriteString("\n")
+			}
+			if eEnd < len(m.envKeys) {
+				b.WriteString(dimStyle.Render(fmt.Sprintf("  ↓ %d more", len(m.envKeys)-eEnd)))
 				b.WriteString("\n")
 			}
 		}
@@ -570,7 +811,12 @@ func (m Model) View() string {
 	if m.app != nil {
 		b.WriteString("\n")
 		b.WriteString(fmt.Sprintf("  Image:   %s\n", m.app.Image))
-		b.WriteString(fmt.Sprintf("  Domain:  %s\n", m.app.Domain))
+		domains := m.app.GetDomains()
+		if len(domains) == 1 {
+			b.WriteString(fmt.Sprintf("  Domain:  %s\n", domains[0]))
+		} else if len(domains) > 1 {
+			b.WriteString(fmt.Sprintf("  Domain:  %s\n", strings.Join(domains, ", ")))
+		}
 		b.WriteString(fmt.Sprintf("  Port:    %d\n", m.app.Port))
 		if m.app.HasDB {
 			b.WriteString(fmt.Sprintf("  DB:      %s\n", m.app.DBName))
@@ -637,10 +883,26 @@ func (m Model) View() string {
 	if m.isSystem {
 		b.WriteString(dimStyle.Render("  [s] Stop  [t] Start  [r] Restart  [l] Logs  [e] Env  [esc] Back"))
 	} else {
-		b.WriteString(dimStyle.Render("  [s] Stop  [t] Start  [r] Restart  [u] Update  [l] Logs  [e] Env  [d] Delete  [esc] Back"))
+		b.WriteString(dimStyle.Render("  [s] Stop  [t] Start  [r] Restart  [u] Update  [l] Logs  [e] Env  [o] Domains  [d] Delete  [esc] Back"))
 	}
 
 	return b.String()
+}
+
+func visibleRange(total, selected, maxVisible int) (start, end int) {
+	if maxVisible <= 0 || total <= maxVisible {
+		return 0, total
+	}
+	start = selected - maxVisible/2
+	if start < 0 {
+		start = 0
+	}
+	end = start + maxVisible
+	if end > total {
+		end = total
+		start = end - maxVisible
+	}
+	return start, end
 }
 
 func formatDuration(d time.Duration) string {
@@ -692,16 +954,22 @@ func (m Model) startApp() tea.Cmd {
 	app := m.app
 	reg := m.registry
 	return func() tea.Msg {
+		lock, err := deploy.AcquireLock()
+		if err != nil {
+			return actionResult{err: fmt.Errorf("a deploy is in progress, please wait")}
+		}
+		defer lock.Release()
+
 		ctx := context.Background()
 		if err := ic.StartContainer(ctx, name); err != nil {
 			return actionResult{err: err}
 		}
 
 		// Wait for IP and update route if app is registered
-		if app != nil && app.Domain != "" {
+		if app != nil && app.HasDomains() {
 			ip, err := ic.WaitForIP(ctx, name, 15_000_000_000) // 15s
 			if err == nil && ip != app.LastIP {
-				_ = traefik.PushRoute(ic, app.Name, app.Domain, ip, app.Port, app.TLS)
+				_ = traefik.PushRoute(ic, app.Name, app.GetDomains(), ip, app.Port, app.TLS)
 				_ = reg.UpdateIP(app.Name, ip)
 			}
 		}
@@ -716,16 +984,22 @@ func (m Model) restartApp() tea.Cmd {
 	app := m.app
 	reg := m.registry
 	return func() tea.Msg {
+		lock, err := deploy.AcquireLock()
+		if err != nil {
+			return actionResult{err: fmt.Errorf("a deploy is in progress, please wait")}
+		}
+		defer lock.Release()
+
 		ctx := context.Background()
 		_ = ic.StopContainer(ctx, name)
 		if err := ic.StartContainer(ctx, name); err != nil {
 			return actionResult{err: err}
 		}
 
-		if app != nil && app.Domain != "" {
+		if app != nil && app.HasDomains() {
 			ip, err := ic.WaitForIP(ctx, name, 15_000_000_000)
 			if err == nil && ip != app.LastIP {
-				_ = traefik.PushRoute(ic, app.Name, app.Domain, ip, app.Port, app.TLS)
+				_ = traefik.PushRoute(ic, app.Name, app.GetDomains(), ip, app.Port, app.TLS)
 				_ = reg.UpdateIP(app.Name, ip)
 			}
 		}
@@ -919,5 +1193,24 @@ func (m Model) deleteEnvVar(key string) tea.Cmd {
 		}
 		envs, _ := ic.GetEnvVars(context.Background(), name)
 		return envVarsResult{envVars: envs}
+	}
+}
+
+func (m Model) pushDomainUpdate(domains []string) tea.Cmd {
+	name := m.appName
+	app := m.app
+	ic := m.incusClient
+	reg := m.registry
+	return func() tea.Msg {
+		// Push Traefik route first — if this fails, leave the registry untouched.
+		if len(domains) > 0 && app != nil {
+			if err := traefik.PushRoute(ic, name, domains, app.LastIP, app.Port, app.TLS); err != nil {
+				return domainUpdateResult{err: fmt.Errorf("updating Traefik route: %w", err)}
+			}
+		}
+		if err := reg.UpdateDomains(name, domains); err != nil {
+			return domainUpdateResult{err: fmt.Errorf("saving to registry: %w", err)}
+		}
+		return domainUpdateResult{domains: domains}
 	}
 }

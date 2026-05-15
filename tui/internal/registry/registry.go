@@ -134,3 +134,12 @@ func (r *AppRegistry) UpdateImage(name, image string) error {
 	r.mu.Unlock()
 	return r.Save()
 }
+
+func (r *AppRegistry) UpdateDomains(name string, domains []string) error {
+	r.mu.Lock()
+	if app, ok := r.Apps[name]; ok {
+		app.SetDomains(domains)
+	}
+	r.mu.Unlock()
+	return r.Save()
+}
