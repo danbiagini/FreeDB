@@ -599,29 +599,37 @@ func runRestore(args []string) int {
 		return 1
 	}
 
-	if err := db.RestoreDatabase(context.Background(), ic, dbName, match.Path); err != nil {
+	// Stop the app container before restoring to avoid active connection issues
+	ctx := context.Background()
+	var appContainer string
+	reg, err := registry.Load("/etc/freedb/registry.json")
+	if err == nil {
+		for _, app := range reg.List() {
+			if app.HasDB && app.DBName == dbName {
+				appContainer = app.Name
+				if app.ContainerName != "" {
+					appContainer = app.ContainerName
+				}
+				fmt.Printf("Stopping %s...\n", appContainer)
+				_ = ic.StopContainer(ctx, appContainer)
+				break
+			}
+		}
+	}
+
+	if err := db.RestoreDatabase(ctx, ic, dbName, match.Path); err != nil {
 		fmt.Fprintf(os.Stderr, "Restore failed: %v\n", err)
+		if appContainer != "" {
+			_ = ic.StartContainer(ctx, appContainer)
+		}
 		return 1
 	}
 
 	fmt.Printf("Database %s restored successfully.\n", dbName)
 
-	// Restart the app container that uses this database
-	reg, err := registry.Load("/etc/freedb/registry.json")
-	if err == nil {
-		for _, app := range reg.List() {
-			if app.HasDB && app.DBName == dbName {
-				cName := app.Name
-				if app.ContainerName != "" {
-					cName = app.ContainerName
-				}
-				fmt.Printf("Restarting %s...\n", cName)
-				ctx := context.Background()
-				_ = ic.StopContainer(ctx, cName)
-				_ = ic.StartContainer(ctx, cName)
-				break
-			}
-		}
+	if appContainer != "" {
+		fmt.Printf("Starting %s...\n", appContainer)
+		_ = ic.StartContainer(ctx, appContainer)
 	}
 	return 0
 }

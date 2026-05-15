@@ -138,6 +138,12 @@ func ListBackupFiles(dbName string) ([]BackupFile, error) {
 		datePart := strings.TrimPrefix(e.Name(), prefix)
 		datePart = strings.TrimSuffix(datePart, ".sql.gz")
 
+		// Guard against prefix collisions (e.g. "myapp" matching "myapp_stage_20260508_...")
+		// The date part must start with 8 digits (YYYYMMDD)
+		if len(datePart) < 8 || datePart[0] < '0' || datePart[0] > '9' {
+			continue
+		}
+
 		info, _ := e.Info()
 		size := int64(0)
 		if info != nil {
@@ -167,6 +173,12 @@ func ListBackupFiles(dbName string) ([]BackupFile, error) {
 // RestoreDatabase restores a database from a gzipped SQL dump file.
 // It drops and recreates the database before restoring.
 func RestoreDatabase(ctx context.Context, ic *incus.Client, dbName, backupPath string) error {
+	// Terminate active connections so dropdb can succeed
+	_, _ = ic.Exec(ctx, dbContainer, []string{
+		"sudo", "-u", "postgres", "psql", "-c",
+		fmt.Sprintf("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '%s' AND pid <> pg_backend_pid()", dbName),
+	})
+
 	// Drop existing database (ignore error if it doesn't exist)
 	_, _ = ic.Exec(ctx, dbContainer, []string{
 		"sudo", "-u", "postgres", "dropdb", "--if-exists", dbName,
@@ -180,14 +192,24 @@ func RestoreDatabase(ctx context.Context, ic *incus.Client, dbName, backupPath s
 		return fmt.Errorf("recreating database %s: %w", dbName, err)
 	}
 
-	// Restore: gunzip the backup and pipe into psql via incus exec
-	// We run this on the host since the backup file is on the host filesystem
-	cmd := fmt.Sprintf("gunzip -c %s | sudo incus exec %s -- sudo -u postgres psql -d %s", backupPath, dbContainer, dbName)
-	execCmd := exec.CommandContext(ctx, "bash", "-c", cmd)
-	output, err := execCmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("restoring %s: %s", dbName, strings.TrimSpace(string(output)))
+	// Push the backup file into the container, then restore inside it.
+	// Piping stdin through "incus exec" via a shell pipe is unreliable.
+	remotePath := fmt.Sprintf("/tmp/%s_restore.sql.gz", dbName)
+	pushCmd := exec.CommandContext(ctx, "sudo", "incus", "file", "push", backupPath, dbContainer+remotePath)
+	if output, err := pushCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("pushing backup to container: %s", strings.TrimSpace(string(output)))
 	}
+
+	restoreCmd := fmt.Sprintf("gunzip -c %s | sudo -u postgres psql -d %s", remotePath, dbName)
+	_, err = ic.Exec(ctx, dbContainer, []string{"bash", "-c", restoreCmd})
+	if err != nil {
+		// Clean up temp file even on failure
+		_, _ = ic.Exec(ctx, dbContainer, []string{"rm", "-f", remotePath})
+		return fmt.Errorf("restoring %s: %w", dbName, err)
+	}
+
+	// Clean up temp file
+	_, _ = ic.Exec(ctx, dbContainer, []string{"rm", "-f", remotePath})
 
 	return nil
 }
