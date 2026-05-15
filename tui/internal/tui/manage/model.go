@@ -692,6 +692,12 @@ func (m Model) startApp() tea.Cmd {
 	app := m.app
 	reg := m.registry
 	return func() tea.Msg {
+		lock, err := deploy.AcquireLock()
+		if err != nil {
+			return actionResult{err: fmt.Errorf("a deploy is in progress, please wait")}
+		}
+		defer lock.Release()
+
 		ctx := context.Background()
 		if err := ic.StartContainer(ctx, name); err != nil {
 			return actionResult{err: err}
@@ -716,6 +722,12 @@ func (m Model) restartApp() tea.Cmd {
 	app := m.app
 	reg := m.registry
 	return func() tea.Msg {
+		lock, err := deploy.AcquireLock()
+		if err != nil {
+			return actionResult{err: fmt.Errorf("a deploy is in progress, please wait")}
+		}
+		defer lock.Release()
+
 		ctx := context.Background()
 		_ = ic.StopContainer(ctx, name)
 		if err := ic.StartContainer(ctx, name); err != nil {
